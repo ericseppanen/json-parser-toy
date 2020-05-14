@@ -6,7 +6,7 @@ Since I like Rust a lot, and I need an excuse to do more writing about Rust, I t
 
 There are a million JSON parsers in the world already, so I don't expect this code to have much non-educational value.  But, hey, you never know.
 
-## Let's get started!
+## Part 1. Let's get started!
 
 A few details, before I write the first lines of code:
 
@@ -24,7 +24,7 @@ A bit of advice for reading the [`nom` documentation](https://docs.rs/crate/nom/
 - We'll be starting with the [character](https://docs.rs/nom/5.1.1/nom/character/index.html) and [number](https://docs.rs/nom/5.1.1/nom/number/index.html) modules.
 - We'll use the [combinator](https://docs.rs/nom/5.1.1/nom/combinator/index.html), [multi](https://docs.rs/nom/5.1.1/nom/multi/index.html), [sequence](https://docs.rs/nom/5.1.1/nom/sequence/index.html), and [branch](https://docs.rs/nom/5.1.1/nom/branch/index.html) modules to tie things together. I'll try to link to the relevant documentation as we go.
 
-## Now let's actually start.
+## Part 2. Now let's actually start.
 
 I've started a new library project (`cargo init --lib json-parser-toy`), and added the `nom 5.1` dependency in `Cargo.toml`.  Let's add a very simple parser function, just to verify that we can build and test our code.  We'll try to parse the strings "true" and "false".  In other words, the grammar for our json subset is:
 ```
@@ -68,3 +68,15 @@ When json_bool returns an error, that doesn't necessarily mean that something is
 This probably still looks kind of strange, because `tag(false)` isn't a complete parser function; it's a function that returns a parser function.  See how our code calls `alt` and `tag` (twice)?  The return value from that code is another function, and that function gets called with the argument `(input)`.
 
 Don't be scared off by the intimidating-looking parameters of the `tag` function in the documentation-- look at the [examples](https://docs.rs/nom/5.1.1/nom/bytes/complete/fn.tag.html#example).  Despite the extra layer of indirection, it's still pretty easy to use.
+
+## Part 3. Returning structs.
+
+We don't want to just return the strings that we matched; we want to return some Rust structs that we can put into a tree form.
+
+Let's add another simple JSON element:
+```rust
+fn json_null(input: &str) -> IResult<&str, &str> {
+    tag("null")
+    (input)
+}
+```

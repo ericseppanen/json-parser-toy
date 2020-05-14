@@ -1,32 +1,25 @@
 use nom::{branch::alt, bytes::complete::tag, IResult};
-use nom::combinator::map;
+use nom::combinator::value;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum JsonBool {
     False,
     True,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub struct JsonNull {}
 
 fn json_bool(input: &str) -> IResult<&str, JsonBool> {
-    let parser = alt((
-        tag("false"),
-        tag("true")
-    ));
-    map(parser, |s| {
-        match s {
-            "false" => JsonBool::False,
-            "true" => JsonBool::True,
-            _ => unreachable!(),
-        }
-    })
+    alt((
+        value(JsonBool::False, tag("false")),
+        value(JsonBool::True, tag("true")),
+    ))
     (input)
 }
 
 fn json_null(input: &str) -> IResult<&str, JsonNull> {
-    map(tag("null"), |_| JsonNull {})
+    value(JsonNull {}, tag("null"))
     (input)
 }
 

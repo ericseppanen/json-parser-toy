@@ -135,3 +135,39 @@ To change the return value, we use `nom`'s `map` combinator function.  It allows
 The json_null function does almost exactly the same thing, though it doesn't need a `match` because it could only have matched one thing.
 
 We need to derive `PartialEq` and `Debug` for our structs and enums so that the `assert_eq!` will work.  Our tests are now using the new data structures `JsonBool` and `JsonNull`.
+
+## Part 4. Another way of doing the same thing.
+
+In `nom`, there are often multiple ways of achieving the same goal.  In our case, `map` is a little bit overkill for this use case.  Let's instead use the `value` combinator instead, which is specialized for the case where we only care that the child parser succeeded.
+
+We'll also refactor `json_bool` so that we don't need to do extra work: we'll apply our combinator a little earlier, before we lose track of which branch we're on.
+
+```rust
+use nom::combinator::value;
+
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum JsonBool {
+    False,
+    True,
+}
+
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub struct JsonNull {}
+
+fn json_bool(input: &str) -> IResult<&str, JsonBool> {
+    alt((
+        value(JsonBool::False, tag("false")),
+        value(JsonBool::True, tag("true")),
+    ))
+    (input)
+}
+
+fn json_null(input: &str) -> IResult<&str, JsonNull> {
+    value(JsonNull {}, tag("null"))
+    (input)
+}
+```
+
+Hopefully this is pretty straightforward.  The `value` combinator returns its first argument (e.g. `JsonNull {}`), if the second argument succeeds (`tag("null")`).  That description is a bit of a lazy mental shortcut, because `value` doesn't do any parsing itself.  Remember, it's a function that consumes one parser function and returns another parser function.  But because `nom` makes things so easy, it's sometimes a lot easier to use the lazy way of thinking when you're plugging combinators together like Lego bricks.
+
+Note that I added `Clone` to the data structures, because `value` requires it.  I also added `Copy` because these are trivially small structs & enums, out of habit.

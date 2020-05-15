@@ -51,7 +51,9 @@ fn test_bool() {
 }
 ```
 
-Already, I realize that I told a lie.  I got the `tag` function from `nom::bytes`, though it's not specific to byte-arrays; it works just fine with text strings as well.  It's not a big deal; it's just a minor quirk of the way `nom` is organized.
+I got the `tag` function from `nom::bytes`, though it's not specific to byte-arrays; it works just fine with text strings as well.  It's not a big deal; it's just a minor quirk of the way `nom` is organized.
+
+We use `alt` to express "one of these choices".  This is a common style in `nom`, and we'll see it again when we use other combinators from `nom::sequence`.
 
 There are a few other things that should be explained.
 

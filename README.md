@@ -173,3 +173,216 @@ fn json_null(input: &str) -> IResult<&str, JsonNull> {
 Hopefully this is pretty straightforward.  The `value` combinator returns its first argument (e.g. `JsonNull {}`), if the second argument succeeds (`tag("null")`).  That description is a bit of a lazy mental shortcut, because `value` doesn't do any parsing itself.  Remember, it's a function that consumes one parser function and returns another parser function.  But because `nom` makes things so easy, it's sometimes a lot easier to use the lazy way of thinking when you're plugging combinators together like Lego bricks.
 
 Note that I added `Clone` to the data structures, because `value` requires it.  I also added `Copy` because these are trivially small structs & enums, out of habit.
+
+## Part 5. Prepare to tree.
+
+Our final output should be some tree-like data structure, similar to [`serde_json::Value`](https://docs.serde.rs/serde_json/value/enum.Value.html).  I'm partial to the word "node" to describe the parts of a tree, so let's start here:
+
+```rust
+pub enum Node {
+    Null(JsonNull),
+    Bool(JsonBool),
+}
+```
+
+Right away, I don't like where this is going.  Here are all the things I'm unhappy with:
+
+1. The redundant naming.  I have `Node::Null` and `JsonNull`, for a value that contains no additional data.
+2. The null and bool types don't really seem like they need their own data structure name, outside of the tree node.  If this were a complex value type that I might want to pass around on its own, sure.  But for this simple case, I think this is a lot simpler:
+
+```rust
+#[derive(PartialEq, Debug, Clone)]
+pub enum Node {
+    Null,
+    Bool(bool),
+}
+
+fn json_bool(input: &str) -> IResult<&str, Node> {
+    alt((
+        value(Node::Bool(false), tag("false")),
+        value(Node::Bool(true), tag("true")),
+    ))
+    (input)
+}
+
+fn json_null(input: &str) -> IResult<&str, Node> {
+    value(Node::Null, tag("null"))
+    (input)
+}
+
+#[test]
+fn test_bool() {
+    assert_eq!(json_bool("false"), Ok(("", Node::Bool(false))));
+    assert_eq!(json_bool("true"), Ok(("", Node::Bool(true))));
+    assert!(json_bool("foo").is_err());
+}
+
+#[test]
+fn test_null() {
+    assert_eq!(json_null("null"), Ok(("", Node::Null)));
+}
+```
+
+We got rid of JsonNull and JsonBool entirely.  For your parser you can choose any output structure that makes sense; different grammars have different properties, and they may not map easily onto Rust's prelude types.
+
+## Part 6. Parsing numbers is hard.
+
+The other remaining literal types in JSON are strings and numbers.  Let's tackle numbers first.  Referring to [RFC8259](https://tools.ietf.org/html/rfc8259), the grammar for a JSON number is:
+
+```text
+number = [ minus ] int [ frac ] [ exp ]
+
+      decimal-point = %x2E       ; .
+      digit1-9 = %x31-39         ; 1-9
+      e = %x65 / %x45            ; e E
+      exp = e [ minus / plus ] 1*DIGIT
+      frac = decimal-point 1*DIGIT
+      int = zero / ( digit1-9 *DIGIT )
+      minus = %x2D               ; -
+      plus = %x2B                ; +
+      zero = %x30                ; 0
+```
+
+That grammar can represent any integer or floating point value; it would be grammatically correct to have an integer a thousand digits long, or a floating point value with huge exponent.  It's our decision how to handle these values.
+
+JSON (like JavaScript) is a bit unusual in not distinguishing integers from floating-point values.  To make this tutorial a little more widely useful, let's output integers and floats as separate types:
+
+```rust
+pub enum Node {
+    Null,
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+}
+```
+
+We'll need to do something when we encounter values that are grammatically correct (e.g. 1000 digits), that we can't handle.  This is a common problem, since most grammars don't attempt to set limits on the size of numbers.  Often there will be a limit set somewhere in the language/format specification, but it's not part of the formal grammar.  JSON doesn't set such limits, which can lead to compatibility problems between implementations.
+
+It will be important in most parsers to set limits and make sure things fail gracefully.  In Rust you're not likely to have problems with buffer overruns, but it might be possible to trigger a denial of service, or perhaps even a crash by triggering excessive recursion.
+
+Let's start by making the parser functions we need, and we'll see where we need error handling.
+
+Let's build a little helper function for the `digit1-9` part, since `nom` only offers `digit`, which includes `0-9`.
+
+```rust
+fn digit1to9(input: &str) -> IResult<&str, &str> {
+    one_of("123456789")
+    (input)
+}
+```
+
+Unfortunately, it doesn't compile:
+```text
+error[E0308]: mismatched types
+  --> src/lib.rs:21:5
+   |
+21 | /     one_of("123456789")
+22 | |     (input)
+   | |___________^ expected `&str`, found `char`
+   |
+   = note: expected enum `std::result::Result<(&str, &str), nom::internal::Err<(&str, nom::error::ErrorKind)>>`
+              found enum `std::result::Result<(&str, char), nom::internal::Err<_>>`
+```
+
+This is a pretty easy mistake to make-- we tried to create a parser function that returns a string slice, but it's returning `char` instead, because, well, that's how `one_of` works.  It's not a big problem for us; just fix the return type to match:
+
+```rust
+fn digit1to9(input: &str) -> IResult<&str, char> {
+    one_of("123456789")
+    (input)
+}
+```
+
+We can now build the next function, one that recognizes integers:
+```rust
+fn uint(input: &str) -> IResult<&str, &str> {
+    alt((
+        tag("0"),
+        recognize(
+            pair(
+                digit1to9,
+                digit0
+            )
+        )
+    ))
+    (input)
+}
+```
+
+Again, we use `alt` to specify that an integer is either `0`, or a non-`0` digit followed by zero or more additional digits.
+
+The new combinator here is `recognize`.  Let's back up and look at the return type of this hypothetical function:
+
+```rust
+fn nonzero_integer(input: &str) -> IResult<&str, ____> {
+    pair(
+        digit1to9,
+        digit0
+    )
+    (input)
+}
+```
+
+Because we used `pair`, the return type would be a 2-tuple.  The first element would be a `char` (because that's what we returned from `digit1to9`), and the other element would be a `&str`.  So the blank above would be filled in like this:
+```rust
+fn nonzero_integer(input: &str) -> IResult<&str, (char, &str)> {
+    ...
+}
+```
+
+In this context, not very helpful.  What we'd like to say is, "match this bunch of stuff, but just return the string slice that covers what we matched."  That's exactly what `recognize` does.
+
+Because we're going to store integers in a different `Node` variant, we should also do one last call to `map`.  But that might make life difficult if we want to re-use this code as part of a token that's representing a floating-point number.
+
+So let's leave the `uint` function alone; we'll use it as a building block of another function.
+Note also that we can't finish parsing an integer until we've consumed the optional leading "minus" symbol.
+
+```rust
+fn json_integer(input: &str) -> IResult<&str, &str> {
+    recognize(
+        pair(
+            opt(tag("-")),
+            uint
+        )
+    )
+    (input)
+}
+```
+
+The `opt` is another `nom` combinator; it means "optional", and unsurprisingly it will return an `Option<T>` where `T` in this case is `&str` (because that's what `tag("-")` will returns.  But that return type is ignored; `recognize` will throw it away and just give us back the characters that were consumed by the successful match.
+
+Let's add one more step to our function: convert the resulting string into a `Node::Integer`.
+
+```rust
+fn json_integer(input: &str) -> IResult<&str, Node> {
+    let parser = recognize(
+        pair(
+            opt(tag("-")),
+            uint
+        )
+    );
+    map(parser, |s| {
+        let n = s.parse::<i64>().unwrap();
+        Node::Integer(n)
+    })
+    (input)
+}
+```
+
+Finally, we discover a point where we'll need some error handling.  [`str::parse`](https://doc.rust-lang.org/std/primitive.str.html#method.parse) returns a `Result`, and will certainly return `Err` if we try to parse something too big.
+
+Let's leave that for later, though.  For now we'll finish up this section with a few unit tests:
+
+```rust
+#[test]
+fn test_integer() {
+    assert_eq!(json_integer("42"), Ok(("", Node::Integer(42))));
+    assert_eq!(json_integer("-123"), Ok(("", Node::Integer(-123))));
+    assert_eq!(json_integer("0"), Ok(("", Node::Integer(0))));
+    assert_eq!(json_integer("01"), Ok(("1", Node::Integer(0))));
+}
+```
+
+Note the fourth test case-- this might not be what you expected.  We know that integers with a leading zero aren't allowed by this grammar-- so why did the call to `json_integer` succeed?  It has to do with the way `nom` operates-- each parser only consumes the part of the string it matches, and leaves the rest for some other parser.  So attempting to parse `01` results in a success, returning a result `Node::Integer(0)` along with a remainder string `1`.
+
+`nom` does have ways for parsers to trigger a fatal error if they're unhappy with the sequence of characters, but this grammar probably won't need them.

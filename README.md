@@ -11,7 +11,7 @@ There are a million JSON parsers in the world already, so I don't expect this co
 A few details, before I write the first lines of code:
 
 1. I'm going to use [RFC8259](https://tools.ietf.org/html/rfc8259) as my authoritative reference for the JSON grammar.
-2. I'm not going to build a JSON serializer.  My goal will only be to consume JSON text and output a structured tree containing the data (a lot like `serde_json::Value`).
+2. I'm not going to build a JSON serializer.  My goal will only be to consume JSON text and output a structured tree containing the data (a lot like [`serde_json::Value`](https://docs.serde.rs/serde_json/value/enum.Value.html) ).
 3. I'll be using [`nom` 5.1.1](https://docs.rs/nom/5.1.1/nom/).  There is a newer 6.0 alpha release out at the time of this writing, but I'm going to ignore it until it has a stable version number.
 4. Some of the code I write will violate the usual `rustfmt` style.  This isn't because I hate `rustfmt`; far from it! But as you'll see, `nom` code can look a little weird, so it's sometimes more readable if we bend the styling rules a little bit.  Do what you like in your own code.
 

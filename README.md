@@ -503,3 +503,63 @@ thread 'test_literal' panicked at 'assertion failed: `(left == right)`
 We've traded one problem for another.  This time, `json_float` runs first, consumes the input `56` input and declares success, returning `Float(56.0)`.  This isn't wrong, exactly.  Had we decided at the beginning to treat all numbers as floating-point (as JavaScript does) this would be the expected outcome.  But since we committed to storing integers and floats as separate tree nodes, we have a problem.
 
 Since we can't allow either the `json_float` parser or the `json_integer` parser to run first (at least as currently written), let's imagine what we'd like to see happen.  Ideally, we would start parsing the `[ minus ] int` part of the grammar, and if that succeeds we have a possible integer-or-float match.  We should then continue on, trying to match the `[ frac ] [ exp ]` part, and if _either of those_ succeeds, we have a float.
+
+There are a few different ways to implement that logic.
+
+One way would be to get `json_float` to fail if the next character after the integer part is _not_ a `.` or `e` character-- without that it can't possibly be a valid float (according to our grammar), so if `json_float` fails at that point we know the `json_integer` parser will run next (and succeed).
+
+```rust
+fn json_float(input: &str) -> IResult<&str, Node> {
+    let parser = recognize(
+        tuple((
+            opt(tag("-")),
+            uint,
+            peek(alt((
+                tag("."),
+                tag("e"),
+            ))),
+            opt(frac),
+            opt(exp)
+        ))
+    );
+    map(parser, |s| {
+        let n = s.parse::<f64>().unwrap();
+        Node::Float(n)
+    })
+    (input)
+}
+```
+
+This code has one small annoyance, though it's not a problem in the overall JSON context.  Imagine that we took this `json_float` parser code, and tried to reuse it in another language, where this other language's grammer would allow the input `123.size()`.  This code would `peek` ahead and see the `.` character, and because of that it would parse `123` as a float rather than an integer.  In other words, this `json_float` implementation decides that this input is a float before it's actually finished parsing all the characters making up that float.
+
+There is a slightly better way, though. Remember, our original problem is that `json_float` will succeed in all of the following cases:
+- `123`
+- `123.0`
+- `123e9`
+- `123.0e9`
+What we'd rather have is a parser that succeeds at the last three, but not the first.  There isn't a combinator in `nom` that implements "A or B or AB", but it's not that hard to implement ourselves:
+
+```rust
+fn json_float(input: &str) -> IResult<&str, Node> {
+    let parser = recognize(
+        tuple((
+            opt(tag("-")),
+            uint,
+            alt((
+                recognize(pair(
+                    frac,
+                    opt(exp)
+                )),
+                exp
+            )),
+        ))
+    );
+    map(parser, |s| {
+        let n = s.parse::<f64>().unwrap();
+        Node::Float(n)
+    })
+    (input)
+}
+```
+
+This new logic uses `alt` to allow two choices: either a `frac` must be present (with an optional `exp`) following, or an `exp` must be present by itself.  An input with neither a valid `frac` or `exp` will now fail, which makes everything work the way we want it to.

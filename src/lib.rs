@@ -2,7 +2,7 @@ use nom::{branch::alt, bytes::complete::tag, IResult};
 use nom::combinator::value;
 use nom::character::complete::{one_of, digit0, digit1};
 use nom::sequence::{pair, tuple};
-use nom::combinator::{map, opt, peek, recognize};
+use nom::combinator::{map, opt, recognize};
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Node {
@@ -102,12 +102,13 @@ fn json_float(input: &str) -> IResult<&str, Node> {
         tuple((
             opt(tag("-")),
             uint,
-            peek(alt((
-                tag("."),
-                tag("e"),
-            ))),
-            opt(frac),
-            opt(exp)
+            alt((
+                recognize(pair(
+                    frac,
+                    opt(exp)
+                )),
+                exp
+            )),
         ))
     );
     map(parser, |s| {
@@ -158,11 +159,16 @@ fn test_float() {
     assert_eq!(json_float("-123.99"), Ok(("", Node::Float(-123.99))));
     assert_eq!(json_float("6.02214086e23"), Ok(("", Node::Float(6.02214086e23))));
     assert_eq!(json_float("-1e6"), Ok(("", Node::Float(-1000000.0))));
-    // FIXME: test too-large integers once error handling is in place.
+    // FIXME: test too-large floats once error handling is in place.
 }
 
 #[test]
 fn test_literal() {
     assert_eq!(json_literal("56"), Ok(("", Node::Integer(56))));
     assert_eq!(json_literal("78.0"), Ok(("", Node::Float(78.0))));
+    // These two tests aren't relevant for JSON. They verify that `json_float`
+    // will never mistake integers for floats in other grammars that might
+    // allow a `.` or `e` character after a literal integer.
+    assert_eq!(json_literal("123else"), Ok(("else", Node::Integer(123))));
+    assert_eq!(json_literal("123.x"), Ok((".x", Node::Integer(123))));
 }

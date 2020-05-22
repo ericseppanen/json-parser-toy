@@ -386,3 +386,120 @@ fn test_integer() {
 Note the fourth test case-- this might not be what you expected.  We know that integers with a leading zero aren't allowed by this grammar-- so why did the call to `json_integer` succeed?  It has to do with the way `nom` operates-- each parser only consumes the part of the string it matches, and leaves the rest for some other parser.  So attempting to parse `01` results in a success, returning a result `Node::Integer(0)` along with a remainder string `1`.
 
 `nom` does have ways for parsers to trigger a fatal error if they're unhappy with the sequence of characters, but this grammar probably won't need them.
+
+## Part 7. Parsing numbers some more.
+
+Let's piece together the bits we need to parse floating point numbers.
+
+```rust
+fn frac(input: &str) -> IResult<&str, &str> {
+    recognize(
+        pair(
+            tag("."),
+            digit1
+        )
+    )
+    (input)
+}
+
+fn exp(input: &str) -> IResult<&str, &str> {
+    recognize(
+        tuple((
+            tag("e"),
+            opt(alt((
+                tag("-"),
+                tag("+")
+            ))),
+            digit1
+        ))
+    )
+    (input)
+}
+
+fn json_float(input: &str) -> IResult<&str, Node> {
+    let parser = recognize(
+        tuple((
+            opt(tag("-")),
+            uint,
+            opt(frac),
+            opt(exp)
+        ))
+    );
+    map(parser, |s| {
+        // FIXME: unwrap() may panic if the value is out of range
+        let n = s.parse::<f64>().unwrap();
+        Node::Float(n)
+    })
+    (input)
+}
+```
+
+The only new parts here are:
+- `nom::character::complete::digit1`: just like `digit0`, except this matches one-or-more digits.
+- `nom::sequence::tuple` is a lot like `pair`, but accepts an arbitrary number of other parsers. Each sub-parser must match in sequence, and the return value is a tuple of results.
+
+I added some straightforward unit tests here, and they all pass.  Despite that, I've made a significant mistake, but one that we won't notice until we start stitching the various parts together.  Let's do that now.
+
+When a parser executes, it obviously won't know which elements are arriving in which order, so we need a parser function to handle everything we've built so far.  Thanks to the magic of `nom`, this part is really easy.
+
+```rust
+fn json_literal(input: &str) -> IResult<&str, Node> {
+    alt((
+        json_integer,
+        json_float,
+        json_bool,
+        json_null
+    ))
+    (input)
+}
+```
+
+I'll quit with the suspense and show you the broken part:
+
+```rust
+#[test]
+fn test_literal() {
+    assert_eq!(json_literal("56"), Ok(("", Node::Integer(56))));
+    assert_eq!(json_literal("78.0"), Ok(("", Node::Float(78.0))));
+}
+```
+
+```text
+test test_literal ... FAILED
+
+failures:
+
+---- test_literal stdout ----
+thread 'test_literal' panicked at 'assertion failed: `(left == right)`
+  left: `Ok((".0", Integer(78)))`,
+ right: `Ok(("", Float(78.0)))`', src/lib.rs:163:5
+```
+
+Because we put `json_integer` first, it grabbed the `78` part and declared success, leaving `.0` for someone else to deal with.  Not so big a deal, right?  Let's just swap the order of the parsers:
+
+```rust
+fn json_literal(input: &str) -> IResult<&str, Node> {
+    alt((
+        json_float,
+        json_integer,
+        json_bool,
+        json_null
+    ))
+    (input)
+}
+```
+
+```text
+test test_literal ... FAILED
+
+failures:
+
+---- test_literal stdout ----
+thread 'test_literal' panicked at 'assertion failed: `(left == right)`
+  left: `Ok(("", Float(56.0)))`,
+ right: `Ok(("", Integer(56)))`', src/lib.rs:162:5
+```
+
+We've traded one problem for another.  This time, `json_float` runs first, consumes the input `56` input and declares success, returning `Float(56.0)`.  This isn't wrong, exactly.  Had we decided at the beginning to treat all numbers as floating-point (as JavaScript does) this would be the expected outcome.  But since we committed to storing integers and floats as separate tree nodes, we have a problem.
+
+Since we can't allow either the `json_float` parser or the `json_integer` parser to run first (at least as currently written), let's imagine what we'd like to see happen.  Ideally, we would start parsing the `[ minus ] int` part of the grammar, and if that succeeds we have a possible integer-or-float match.  We should then continue on, trying to match the `[ frac ] [ exp ]` part, and if _either of those_ succeeds, we have a float.

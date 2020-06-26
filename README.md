@@ -563,3 +563,185 @@ fn json_float(input: &str) -> IResult<&str, Node> {
 ```
 
 This new logic uses `alt` to allow two choices: either a `frac` must be present (with an optional `exp`) following, or an `exp` must be present by itself.  An input with neither a valid `frac` or `exp` will now fail, which makes everything work the way we want it to.
+
+## Part 8. Handling string literals
+
+So far we support literal null, boolean, integer, and float types.  There's only one more literal type left to handle: strings.
+
+In the JSON grammar, a string is basically a series of Unicode characters that starts and ends with a quote, plus a few extra rules:
+
+1. Certain characters must be escaped (ASCII control characters, quotes, and backslashes)
+2. Any character may be escaped, using `\u` plus 4 hexadecimal digits, e.g. `\uF903`.
+3. A small number of common characters have two-character escapes: `\"` `\\` `\/` `\b` `\f` `\n` `\r` `\t`.
+
+That's how RFC 8259 does things, anyway.  Different implementations may have subtle differences.
+
+This means there are many possible ways to represent a certain string. We're only building a parser, so we just need to make sure we can parse all the valid JSON representations (and hopefully return an error on all the invalid ones).
+
+The presence of escape patterns makes our job more difficult.  There are different ways we might choose to break down the problem.  I'm going to choose to break escape handling into a separate phase.  This means we will only use `nom` to do the lexing part (finding the bounds of the string literal), and we'll follow up with an "un-escaping" pass to decode the escaped characters.
+
+Bad inputs must be rejected by one of the two phases, but we don't care which one.  For example, `"\ud800"` looks like a valid JSON string, but can't be decoded because U+D800 is a magic "surrogate" character, meaning it's half of a character than needs more than 16 bits to encode.  We should also reject things like `"\x"` (a nonexistent escape), `"\u001"` (not enough hex digits), and `"\"` (which is unterminated because the trailing quote is escaped).  We also need to reject "naked" (non-escaped) control characters (ASCII 0x00-0x1F), though for some reason 0x7F (ASCII DELETE) is legal.
+
+Let's begin by building a parser for "a string of valid non-escaped characters": everything except control characters, backslash, and quote. We don't need to check the upper limit 0x10FFFF because those characters will never appear in a Rust `char`.
+
+```rust
+use nom::bytes::complete::take_while1;
+
+fn is_nonescaped_string_char(c: char) -> bool {
+    let cv = c as u32;
+    (cv >= 0x20) && (cv != 0x22) && (cv != 0x5C)
+}
+
+// One or more unescaped text characters
+fn nonescaped_string(input: &str) -> IResult<&str, &str> {
+    take_while1(is_nonescaped_string_char)
+    (input)
+}
+```
+
+The `take_while1` function comes from the nom `bytes` module (which, remember, isn't specific to byte sequences).  `nom` offers a few different `take` functions in this module; `take_while1` consumes characters that match some condition, requiring at least 1 matching character.
+
+Next, let's add a parser that can detect one escape sequence.  Actually, we're going to be even lazier than that; we'll pretend that `\u` is an escape sequence all by itself, and let the unescape function determine whether the characters that follow make sense.  We could easily do it differently, but since the unescape code will need to look at those characters in detail later, we won't waste time doing that work twice.
+
+```rust
+fn escape_code(input: &str) -> IResult<&str, &str> {
+    recognize(
+        pair(
+            tag("\\"),
+            alt((
+                tag("\""),
+                tag("\\"),
+                tag("/"),
+                tag("b"),
+                tag("f"),
+                tag("n"),
+                tag("r"),
+                tag("t"),
+                tag("u"),
+            ))
+        )
+    )
+    (input)
+}
+```
+
+Using those two pieces, we can now connect them together to parse the entire body of a JSON string (minus the quotes that surround it):
+
+```rust
+use nom::multi::many0;
+
+fn string_body(input: &str) -> IResult<&str, &str> {
+    recognize(
+        many0(
+            alt((
+                nonescaped_string,
+                escape_code
+            ))
+        )
+    )
+    (input)
+}
+```
+
+We've seen most of the pieces here before.
+
+`many0` tries to apply a parser function repeatedly, gathering all of the results into a vector.  This version gathers "zero or more" of whatever we were searching for (which is desirable because `""` is a valid JSON string).  There is also a `many1`, (if you want "one or more") and several other variations.
+
+The final `recognize` throws away the output of `many0` (a vector), and instead just returns to us the string that was matched. It's a little unfortunate that we're throwing away the information we developed about where escapes appear-- perhaps another implementation could do the unescaping work right here.  It seems pretty typical (in my limited experience) to have to make tradeoffs like this.  We're breaking the work into multiple phases, which may require a little bit of redundant effort, but our code gets a little simpler as a result.
+
+There's one subtle thing about these two layers that should be pointed out.  Both `nonescaped_string` and `escape_code` are parsers that return "one or more characters".  And then we use those to build a parser that returns "zero or more characters".  In fact, you can't build a "zero or more" parser using other "zero or more" components, because that could trigger an infinite loop: the outer parser could try to gather an infinite number of zero-sized subparser successes.  Typically `nom` combinators will throw an error instead of going into an infinite loop.
+
+The next step is pretty simple: the string body must be wrapped in quotes.
+
+```rust
++use nom::sequence::delimited;
+
+fn json_string(input: &str) -> IResult<&str, &str> {
+    delimited(
+        tag("\""),
+        string_body,
+        tag("\"")
+    )
+    (input)
+}
+```
+
+This is the first time we've used `delimited`.  It just throws away the first and third arguments (here, the quote marks), and returns whatever the middle parser matched.
+
+At this point I should plug in some code to do un-escaping. Because this code doesn't use `nom` and doesn't really help us understand how to write a `nom` parser, I'm going to skip the explanation and just pull the [escape8259](https://docs.rs/escape8259/0.5.0/escape8259/) crate that does this part.  A call to un-escape a string is pretty simple:
+
+```rust
+pub fn unescape(s: &str) -> Result<String, UnescapeError>
+```
+
+So all we need to do is plug that into `json_string`. We earlier used `nom`'s `map` combinator to do this sort of thing, but here we need something a little different because `unescape` may fail. We need to use `map_res` to handle `Result::Err`.
+
+```rust
+use nom::combinator::map_res;
+use escape8259::unescape;
+
+fn string_literal(input: &str) -> IResult<&str, String> {
+    let parser = delimited(
+        tag("\""),
+        string_body,
+        tag("\"")
+    );
+    map_res(parser, |s| {
+        unescape(s)
+    })
+    (input)
+}
+```
+
+We also need to update our `Node` enum to include a `Str` variant, and make that our final output.
+
+```rust
+pub enum Node {
+    Null,
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+    Str(String),
+}
+
+fn json_string(input: &str) -> IResult<&str, Node> {
+    map(string_literal, |s| {
+        Node::Str(s)
+    })
+    (input)
+}
+```
+
+Finally, we should write some tests to make sure this is working correctly.
+
+```rust
+#[test]
+fn test_string() {
+    // Plain Unicode strings with no escaping
+    assert_eq!(json_string(r#""""#), Ok(("", Node::Str("".into()))));
+    assert_eq!(json_string(r#""Hello""#), Ok(("", Node::Str("Hello".into()))));
+    assert_eq!(json_string(r#""の""#), Ok(("", Node::Str("の".into()))));
+    assert_eq!(json_string(r#""𝄞""#), Ok(("", Node::Str("𝄞".into()))));
+
+    // valid 2-character escapes
+    assert_eq!(json_string(r#""  \\  ""#), Ok(("", Node::Str("  \\  ".into()))));
+    assert_eq!(json_string(r#""  \"  ""#), Ok(("", Node::Str("  \"  ".into()))));
+
+    // valid 6-character escapes
+    assert_eq!(json_string(r#""\u0000""#), Ok(("", Node::Str("\x00".into()))));
+    assert_eq!(json_string(r#""\u00DF""#), Ok(("", Node::Str("ß".into()))));
+    assert_eq!(json_string(r#""\uD834\uDD1E""#), Ok(("", Node::Str("𝄞".into()))));
+
+    // Invalid because surrogate characters must come in pairs
+    assert!(json_string(r#""\ud800""#).is_err());
+    // Unknown 2-character escape
+    assert!(json_string(r#""\x""#).is_err());
+    // Not enough hex digits
+    assert!(json_string(r#""\u""#).is_err());
+    assert!(json_string(r#""\u001""#).is_err());
+    // Naked control character
+    assert!(json_string(r#""\x0a""#).is_err());
+    // Not a JSON string because it's not wrapped in quotes
+    assert!(json_string("abc").is_err());
+}
+```

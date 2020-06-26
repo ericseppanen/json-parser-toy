@@ -1,8 +1,11 @@
-use nom::{branch::alt, bytes::complete::tag, IResult};
-use nom::combinator::value;
+use nom::{branch::alt, IResult};
+use nom::bytes::complete::{tag, take_while1};
 use nom::character::complete::{one_of, digit0, digit1};
-use nom::sequence::{pair, tuple};
-use nom::combinator::{map, opt, recognize};
+use nom::combinator::{map, map_res, opt, recognize, value};
+use nom::multi::many0;
+use nom::sequence::{delimited, pair, tuple};
+use escape8259::unescape;
+
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Node {
@@ -10,15 +13,90 @@ pub enum Node {
     Bool(bool),
     Integer(i64),
     Float(f64),
+    Str(String),
 }
 
 fn json_literal(input: &str) -> IResult<&str, Node> {
     alt((
+        json_string,
         json_float,
         json_integer,
         json_bool,
         json_null
     ))
+    (input)
+}
+
+// A character that is:
+// NOT a control character (0x00 - 0x1F)
+// NOT a quote character (0x22)
+// NOT a backslash character (0x5C)
+// Is within the unicode range (< 0x10FFFF) (this is already guaranteed by Rust char)
+fn is_nonescaped_string_char(c: char) -> bool {
+    let cv = c as u32;
+    (cv >= 0x20) && (cv != 0x22) && (cv != 0x5C)
+}
+
+// One or more unescaped text characters
+fn nonescaped_string(input: &str) -> IResult<&str, &str> {
+    take_while1(is_nonescaped_string_char)
+    (input)
+}
+
+// There are only two types of escape allowed by RFC 8259.
+// - single-character escapes \" \\ \/ \b \f \n \r \t
+// - general-purpose \uXXXX
+// Note: we don't enforce that escape codes are valid here.
+// There must be a decoder later on.
+fn escape_code(input: &str) -> IResult<&str, &str> {
+    recognize(
+        pair(
+            tag("\\"),
+            alt((
+                tag("\""),
+                tag("\\"),
+                tag("/"),
+                tag("b"),
+                tag("f"),
+                tag("n"),
+                tag("r"),
+                tag("t"),
+                tag("u"),
+            ))
+        )
+    )
+    (input)
+}
+
+// Zero or more text characters
+fn string_body(input: &str) -> IResult<&str, &str> {
+    recognize(
+        many0(
+            alt((
+                nonescaped_string,
+                escape_code
+            ))
+        )
+    )
+    (input)
+}
+
+fn string_literal(input: &str) -> IResult<&str, String> {
+    let parser = delimited(
+        tag("\""),
+        string_body,
+        tag("\"")
+    );
+    map_res(parser, |s| {
+        unescape(s)
+    })
+    (input)
+}
+
+fn json_string(input: &str) -> IResult<&str, Node> {
+    map(string_literal, |s| {
+        Node::Str(s)
+    })
     (input)
 }
 
@@ -163,6 +241,38 @@ fn test_float() {
 }
 
 #[test]
+fn test_string() {
+    // Plain Unicode strings with no escaping
+    assert_eq!(json_string(r#""""#), Ok(("", Node::Str("".into()))));
+    assert_eq!(json_string(r#""Hello""#), Ok(("", Node::Str("Hello".into()))));
+    assert_eq!(json_string(r#""の""#), Ok(("", Node::Str("の".into()))));
+    assert_eq!(json_string(r#""𝄞""#), Ok(("", Node::Str("𝄞".into()))));
+
+    // valid 2-character escapes
+    assert_eq!(json_string(r#""  \\  ""#), Ok(("", Node::Str("  \\  ".into()))));
+    assert_eq!(json_string(r#""  \"  ""#), Ok(("", Node::Str("  \"  ".into()))));
+
+    // valid 6-character escapes
+    assert_eq!(json_string(r#""\u0000""#), Ok(("", Node::Str("\x00".into()))));
+    assert_eq!(json_string(r#""\u00DF""#), Ok(("", Node::Str("ß".into()))));
+    assert_eq!(json_string(r#""\uD834\uDD1E""#), Ok(("", Node::Str("𝄞".into()))));
+
+    // Invalid because surrogate characters must come in pairs
+    assert!(json_string(r#""\ud800""#).is_err());
+    // Unknown 2-character escape
+    assert!(json_string(r#""\x""#).is_err());
+    // Not enough hex digits
+    assert!(json_string(r#""\u""#).is_err());
+    assert!(json_string(r#""\u001""#).is_err());
+    // Naked control character
+    assert!(json_string(r#""\x0a""#).is_err());
+    // Not a JSON string because it's not wrapped in quotes
+    assert!(json_string("abc").is_err());
+    // An unterminated string (because the trailing quote is escaped)
+    assert!(json_string(r#""\""#).is_err());
+}
+
+#[test]
 fn test_literal() {
     assert_eq!(json_literal("56"), Ok(("", Node::Integer(56))));
     assert_eq!(json_literal("78.0"), Ok(("", Node::Float(78.0))));
@@ -171,4 +281,5 @@ fn test_literal() {
     // allow a `.` or `e` character after a literal integer.
     assert_eq!(json_literal("123else"), Ok(("else", Node::Integer(123))));
     assert_eq!(json_literal("123.x"), Ok((".x", Node::Integer(123))));
+    assert_eq!(json_literal(r#""Hello""#), Ok(("", Node::Str("Hello".into()))));
 }

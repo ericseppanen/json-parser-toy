@@ -745,3 +745,160 @@ fn test_string() {
     assert!(json_string("abc").is_err());
 }
 ```
+
+## Part 9. Arrays and Objects
+
+Finally, all of the hard parts are complete, and we get to the fun parts: arrays and objects (what we'd call a map or a dictionary in most other contexts).
+
+Let's start with the changes to our `Node` enum, to give us a little better idea how these recursive data structures should work.
+
+```rust
+pub enum Node {
+    Null,
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+    Str(String),
+    Array(Vec<Node>),
+    Object(Vec<(String, Node)>),
+}
+```
+
+An array can be heterogenous (different value types).  Each object member must have a string for its key, and may have any value type.
+
+Let's implement arrays first.
+
+```rust
+use nom::multi::separated_list;
+
+fn json_array(input: &str) -> IResult<&str, Node> {
+    let parser = delimited(
+        tag("["),
+        separated_list(tag(","), json_value),
+        tag("]")
+    );
+    map(parser, |v| {
+        Node::Array(v)
+    })
+    (input)
+}
+```
+
+That was surprisingly easy.  The only new thing we needed was `separated_list`, which alternates between two subparsers.  The first argument is the "separator", and its result is thrown away; it returns a vector of results from the second parser.  It will match zero or more elements; `nom` has a `separated_nonempty_list` if you want one-or-more.
+
+Objects are up next; they're a little more complicated so let's implement them as two separate functions.
+
+```rust
+use nom::sequence::separated_pair;
+
+fn object_member(input: &str) -> IResult<&str, (String, Node)> {
+    separated_pair(string_literal, tag(":"), json_value)
+    (input)
+}
+
+fn json_object(input: &str) -> IResult<&str, Node> {
+    let parser = delimited(
+        tag("{"),
+        separated_list(
+            tag(","),
+            object_member
+        ),
+        tag("}")
+    );
+    map(parser, |v| {
+        Node::Object(v)
+    })
+    (input)
+}
+```
+
+This looks a lot like the array implementation.  The only difference (other than the braces) is that where an array looks for a single value, the object looks for a quoted string literal, then a `:` character, and then a value.
+
+And we have a JSON parser!
+
+## Part 10. Spacing out
+
+Well, we almost have a JSON parser.  We might start testing arrays like this:
+
+```rust
+#[test]
+fn test_array() {
+    assert_eq!(json_array("[]"), Ok(("", Node::Array(vec![]))));
+    assert_eq!(json_array("[1]"), Ok(("", Node::Array(vec![Node::Integer(1)]))));
+
+    let expected = Node::Array(vec![Node::Integer(1), Node::Integer(2)]);
+    assert_eq!(json_array("[1,2]"), Ok(("", expected)));
+}
+```
+
+But it doesn't work if we write:
+
+```rust
+    assert_eq!(json_array("[1, 2]"), Ok(("", expected)));
+```
+
+The only difference is the space character after the comma.  We forgot to handle whitespace.
+
+In fact, we haven't handled whitespace anywhere.  Whitespace could appear anywhere: before or after values or any punctuation (braces, brackets, comma, or colon).
+
+We could build our own whitespace-matching parser.  All we want is a parser function that will match zero or more spaces, tabs, carriage returns, and newlines. But it turns out that's exactly what `nom::character::complete::multispace0` does, so we can do that.
+
+That means we need to do a bunch of substitutions, things like:
+```rust
+  tag("[")
+```
+need to become
+```rust
+  delimited(multispace0, tag("["), multispace0)
+```
+
+Which adds a lot of clutter, and is kind of hard to read.  Maybe instead we should write a combinator of our own to make this a little more compact.  This isn't necessary-- the result will emit exactly the same code as the above.  The only reason I'm going to tackle this is it provides a little bit of insight into the pile of generic parameters you see if you look at the documentation for `nom` combinators.  If you don't care, feel free to skip this section.
+
+First, let's write a combinator that does nothing, other than apply a combinator we specify.
+```rust
+fn identity<F, I, O, E>(f: F) -> impl Fn(I) -> IResult<I, O, E>
+where
+    F: Fn(I) -> IResult<I, O, E>,
+{
+    f
+}
+```
+
+That looks pretty intimidating.  But that's how most of the `nom` combinators look, so if we can unpack that, we'll have a little more understanding how `nom` is built.
+
+Let's see if we can make some sense of all those generic parameters.
+
+`F` is the type of the parser we pass in.  It could be any `nom`-style parser, and we already know what those look like; they accept one input parameter, and return an `IResult`.  This `IResult` has three generic parameters, and we've always used two-- the third has a default value, and we've been omitting it.
+
+So our `F` is a function that accepts one `I` and returns `IResult<I, O, E>`.  `I` is our input parameter (which has been `&str` so far everywhere). `O` is our output type (and we've used a bunch of different ones; `&str`, `Node`, etc.)  The `E` is the parser error type, and we can continue ignoring that for now since we've only used the default.
+
+Our combinator returns a closure.  So its return type is `Fn(I) -> IResult<I, O, E>`.  That looks the same as `F`, but for all cases other than `identity` we'll return a different closure than the input, so we will need to spell out the return type.
+
+A lot of `nom` combinators have even more complex type signatures (`separated_pair` has 8 generic parameters!) but picking them apart is usually pretty straightforward if you're patient.  You'll probably only need to know when something fails to compile.
+
+Anyway, let's write a combinator that wraps its input in a `delimited` with `multispace0` on both sides.
+
+```rust
+fn spacey<F, I, O, E>(f: F) -> impl Fn(I) -> IResult<I, O, E>
+where
+    F: Fn(I) -> IResult<I, O, E>,
+{
+    delimited(multispace0, f, multispace0)
+}
+```
+
+This explodes with a huge pile of errors; many complaints about trait bounds that aren't met for `I` and `E`.  But it turns out that this is just because `multispace0` requires those on its `I` and `E`, so we have to guarantee those trait bounds as well.  Copying those trait bounds over to our function will work:
+
+```rust
+fn spacey<F, I, O, E>(f: F) -> impl Fn(I) -> IResult<I, O, E>
+where
+    F: Fn(I) -> IResult<I, O, E>,
+    I: nom::InputTakeAtPosition,
+    <I as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
+    E: nom::error::ParseError<I>,
+{
+    delimited(multispace0, f, multispace0)
+}
+```
+
+Was that worth it?  Maybe not for this program.  But it's interesting to see what's involved in building our own combinators.  Maybe the `nom` function documentation will look a little less scary, too.

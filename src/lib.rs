@@ -1,9 +1,9 @@
 use nom::{branch::alt, IResult};
 use nom::bytes::complete::{tag, take_while1};
-use nom::character::complete::{one_of, digit0, digit1};
+use nom::character::complete::{one_of, digit0, digit1, multispace0};
 use nom::combinator::{map, map_res, opt, recognize, value};
-use nom::multi::many0;
-use nom::sequence::{delimited, pair, tuple};
+use nom::multi::{many0, separated_list};
+use nom::sequence::{delimited, pair, separated_pair, tuple};
 use escape8259::unescape;
 
 
@@ -14,16 +14,63 @@ pub enum Node {
     Integer(i64),
     Float(f64),
     Str(String),
+    Array(Vec<Node>),
+    Object(Vec<(String, Node)>),
 }
 
-fn json_literal(input: &str) -> IResult<&str, Node> {
-    alt((
+fn json_value(input: &str) -> IResult<&str, Node> {
+    spacey(alt((
+        json_array,
+        json_object,
         json_string,
         json_float,
         json_integer,
         json_bool,
         json_null
-    ))
+    )))
+    (input)
+}
+
+fn spacey<F, I, O, E>(f: F) -> impl Fn(I) -> IResult<I, O, E>
+where
+    F: Fn(I) -> IResult<I, O, E>,
+    I: nom::InputTakeAtPosition,
+    <I as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
+    E: nom::error::ParseError<I>,
+{
+    delimited(multispace0, f, multispace0)
+}
+
+fn json_array(input: &str) -> IResult<&str, Node> {
+    let parser = delimited(
+        spacey(tag("[")),
+        separated_list(spacey(tag(",")), json_value),
+        spacey(tag("]")),
+    );
+    map(parser, |v| {
+        Node::Array(v)
+    })
+    (input)
+}
+
+// "key: value", where key and value are any JSON type.
+fn object_member(input: &str) -> IResult<&str, (String, Node)> {
+    separated_pair(string_literal, spacey(tag(":")), json_value)
+    (input)
+}
+
+fn json_object(input: &str) -> IResult<&str, Node> {
+    let parser = delimited(
+        spacey(tag("{")),
+        separated_list(
+            spacey(tag(",")),
+            object_member
+        ),
+        spacey(tag("}")),
+    );
+    map(parser, |v| {
+        Node::Object(v)
+    })
     (input)
 }
 
@@ -273,13 +320,29 @@ fn test_string() {
 }
 
 #[test]
-fn test_literal() {
-    assert_eq!(json_literal("56"), Ok(("", Node::Integer(56))));
-    assert_eq!(json_literal("78.0"), Ok(("", Node::Float(78.0))));
+fn test_array() {
+    assert_eq!(json_array("[ ]"), Ok(("", Node::Array(vec![]))));
+    assert_eq!(json_array("[ 1 ]"), Ok(("", Node::Array(vec![Node::Integer(1)]))));
+
+    let expected = Node::Array(vec![Node::Integer(1), Node::Str("x".into())]);
+    assert_eq!(json_array(r#" [ 1 , "x" ] "#), Ok(("", expected)));
+}
+
+#[test]
+fn test_object() {
+    assert_eq!(json_object("{ }"), Ok(("", Node::Object(vec![]))));
+    let expected = Node::Object(vec![("1".into(), Node::Integer(2))]);
+    assert_eq!(json_object(r#" { "1" : 2 } "#), Ok(("", expected)));
+}
+
+#[test]
+fn test_values() {
+    assert_eq!(json_value(" 56 "), Ok(("", Node::Integer(56))));
+    assert_eq!(json_value(" 78.0 "), Ok(("", Node::Float(78.0))));
     // These two tests aren't relevant for JSON. They verify that `json_float`
     // will never mistake integers for floats in other grammars that might
     // allow a `.` or `e` character after a literal integer.
-    assert_eq!(json_literal("123else"), Ok(("else", Node::Integer(123))));
-    assert_eq!(json_literal("123.x"), Ok((".x", Node::Integer(123))));
-    assert_eq!(json_literal(r#""Hello""#), Ok(("", Node::Str("Hello".into()))));
+    assert_eq!(json_value("123else"), Ok(("else", Node::Integer(123))));
+    assert_eq!(json_value("123.x"), Ok((".x", Node::Integer(123))));
+    assert_eq!(json_value(r#" "Hello" "#), Ok(("", Node::Str("Hello".into()))));
 }

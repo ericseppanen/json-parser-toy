@@ -65,9 +65,9 @@ assert_eq!(json_bool("false more"), Ok((" more", "false")));
 
 The `json_bool` function consumed the `false` part of the string, and left the rest for somebody else to deal with.
 
-When json_bool returns an error, that doesn't necessarily mean that something is wrong.  Our parser isn't going to give up.  It just means that this particular bit of grammar didn't match.  Depending on how we write our code, other parser functions might be called instead.  You can actually see this in action if you look at how the `alt` combinator works.  It first calls a parser function `tag(false)`, and if that returns an error, it instead feeds the same input into `tag(true)`, to see if it might succeed instead.
+When `json_bool` returns an error, that doesn't necessarily mean that something is wrong.  Our parser isn't going to give up.  It just means that this particular bit of grammar didn't match.  Depending on how we write our code, other parser functions might be called instead.  You can actually see this in action if you look at how the `alt` combinator works.  It first calls a parser function `tag("false")`, and if that returns an error, it instead feeds the same input into `tag("true")`, to see if it might succeed instead.
 
-This probably still looks kind of strange, because `tag(false)` isn't a complete parser function; it's a function that returns a parser function.  See how our code calls `alt` and `tag` (twice)?  The return value from that code is another function, and that function gets called with the argument `(input)`.
+This probably still looks kind of strange, because `tag("false")` isn't a complete parser function; it's a function that returns a parser function.  See how our code calls `alt` and `tag` (twice)?  The return value from that code is another function, and that function gets called with the argument `(input)`.
 
 Don't be scared off by the intimidating-looking parameters of the `tag` function in the documentation-- look at the [examples](https://docs.rs/nom/5.1.1/nom/bytes/complete/fn.tag.html#example).  Despite the extra layer of indirection, it's still pretty easy to use.
 

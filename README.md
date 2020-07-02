@@ -1,30 +1,33 @@
 # Let's build a parser!
 
-This is a demonstration of building a parser in Rust using the [`nom`](https://docs.rs/nom/5.1.1/nom/) crate.  I recently built a parser for the [`cddl-cat`](https://docs.rs/cddl-cat/latest/cddl_cat/) crate using nom, and I found it a surprisingly not-terrible experience, much better than my past experiences with other parser-generators in other languages.
+This is a demonstration of building a parser in Rust using the [`nom`](https://docs.rs/nom/5.1.2/nom/) crate.  I recently built a parser for the [`cddl-cat`](https://docs.rs/cddl-cat/latest/cddl_cat/) crate using nom, and I found it a surprisingly not-terrible experience, much better than my past experiences with other parser-generators in other languages.
 
 Since I like Rust a lot, and I need an excuse to do more writing about Rust, I thought I'd do another demonstration project.  I decided to choose a simple syntax, to keep this a short project. So I'm going to build a parser for JSON.
 
+<!-- more -->
+
 There are a million JSON parsers in the world already, so I don't expect this code to have much non-educational value.  But, hey, you never know.
 
-## Part 1. Let's get started!
+## Part 1. Introduction.
 
 A few details, before I write the first lines of code:
 
 1. I'm going to use [RFC8259](https://tools.ietf.org/html/rfc8259) as my authoritative reference for the JSON grammar.
 2. I'm not going to build a JSON serializer.  My goal will only be to consume JSON text and output a structured tree containing the data (a lot like [`serde_json::Value`](https://docs.serde.rs/serde_json/value/enum.Value.html) ).
-3. I'll be using [`nom` 5.1.1](https://docs.rs/nom/5.1.1/nom/).  There is a newer 6.0 alpha release out at the time of this writing, but I'm going to ignore it until it has a stable version number.
+3. I'll be using [`nom` 5.1](https://docs.rs/nom/5.1.2/nom/).  There is a newer 6.0 alpha release out at the time of this writing, but I'm going to ignore it until it has a stable version number.
 4. Some of the code I write will violate the usual `rustfmt` style.  This isn't because I hate `rustfmt`; far from it! But as you'll see, `nom` code can look a little weird, so it's sometimes more readable if we bend the styling rules a little bit.  Do what you like in your own code.
+5. All of my source code will be [available on GitHub](https://github.com/ericseppanen/json-parser-toy). If you have comments or suggestions, or see a bug or something wrong in this post, please open an issue there.
 
-Let's start with a few words about `nom`.  It can take a little bit of time to adjust to writing a parser with `nom`, because it doesn't work by first tokenizing the input and then parsing those tokens.  You tackle both of those steps at once.
+Let's start with a few words about `nom`.  It can take a little bit of time to adjust to writing a parser with `nom`, because it doesn't work by first tokenizing the input and then parsing those tokens.  Both of those steps can be tackled at once.
 
-I'll be using only the `nom` functions, not the `nom` macros.  There are basically two implementations of everything in `nom` (a function and a macro), though the two are from different development eras and aren't exactly the same.  I'm inclined to always choose functions over macros when possible, because it's more likely to lead to a friendly programmer experience, so that's the way I'm going to go.  Note, however, that a lot of the `nom` documentation only refers to the older macro implementations of things, and so do many examples and tutorials.  So don't be surprised when you see macros everywhere.  Don't be afraid, either: the `nom` functions work great, are stable, and provide most of the things you need.
+I'll be using only the `nom` functions, not the `nom` macros.  There are basically two implementations of everything in `nom` (a function and a macro), though the two are from different development eras and aren't exactly the same.  I'm inclined to always choose functions over macros when possible, because it's more likely to lead to a friendly programmer experience.  Note, however, that a lot of the `nom` documentation only refers to the older macro implementations of things, and so do many examples and tutorials.  So don't be surprised when you see macros everywhere.  Don't be afraid, either: the `nom` functions work great, are stable, and provide most of the things you need.
 
-A bit of advice for reading the [`nom` documentation](https://docs.rs/crate/nom/5.1.1), if you're following along with this implementation:
-- Start from the [modules](https://docs.rs/nom/5.1.1/nom/#modules) section of the documentation.
-- We'll be starting with the [character](https://docs.rs/nom/5.1.1/nom/character/index.html) and [number](https://docs.rs/nom/5.1.1/nom/number/index.html) modules.
-- We'll use the [combinator](https://docs.rs/nom/5.1.1/nom/combinator/index.html), [multi](https://docs.rs/nom/5.1.1/nom/multi/index.html), [sequence](https://docs.rs/nom/5.1.1/nom/sequence/index.html), and [branch](https://docs.rs/nom/5.1.1/nom/branch/index.html) modules to tie things together. I'll try to link to the relevant documentation as we go.
+A bit of advice for reading the [`nom` documentation](https://docs.rs/crate/nom/5.1.2), if you're following along with this implementation:
+- Start from the [modules](https://docs.rs/nom/5.1.2/nom/#modules) section of the documentation.
+- We'll be starting with the [character](https://docs.rs/nom/5.1.2/nom/character/index.html) and [number](https://docs.rs/nom/5.1.2/nom/number/index.html) modules.
+- We'll use the [combinator](https://docs.rs/nom/5.1.2/nom/combinator/index.html), [multi](https://docs.rs/nom/5.1.2/nom/multi/index.html), [sequence](https://docs.rs/nom/5.1.2/nom/sequence/index.html), and [branch](https://docs.rs/nom/5.1.2/nom/branch/index.html) modules to tie things together. I'll try to link to the relevant documentation as we go.
 
-## Part 2. Now let's actually start.
+## Part 2. Our first bit of parser code.
 
 I've started a new library project (`cargo init --lib json-parser-toy`), and added the `nom 5.1` dependency in `Cargo.toml`.  Let's add a very simple parser function, just to verify that we can build and test our code.  We'll try to parse the strings "true" and "false".  In other words, the grammar for our json subset is:
 ```
@@ -51,13 +54,13 @@ fn test_bool() {
 }
 ```
 
-I got the `tag` function from `nom::bytes`, though it's not specific to byte-arrays; it works just fine with text strings as well.  It's not a big deal; it's just a minor quirk of the way `nom` is organized.
+I got the [`tag`](https://docs.rs/nom/5.1.2/nom/bytes/complete/fn.tag.html) function from `nom::bytes`, though it's not specific to byte-arrays; it works just fine with text strings as well.  It's not a big deal; it's just a minor quirk of the way `nom` is organized.
 
-We use `alt` to express "one of these choices".  This is a common style in `nom`, and we'll see it again when we use other combinators from `nom::sequence`.
+We use [`alt`](https://docs.rs/nom/5.1.2/nom/branch/fn.alt.html) to express "one of these choices".  This is a common style in `nom`, and we'll see it again when we use other combinators from `nom::sequence`.
 
 There are a few other things that should be explained.
 
-[`IResult`](https://docs.rs/nom/5.1.1/nom/type.IResult.html) is an important part of working with `nom`.  It's a specialized `Result`, where an `Ok` always returns a tuple of two values.  In this case, `IResult<&str, &str>` returns two string slices.  The first is the "remainder": this is everything that wasn't parsed.  The second part is the output from a successful parse; in this case we just return the string we matched.  For example, I could add this to my test, and it would work:
+[`IResult`](https://docs.rs/nom/5.1.2/nom/type.IResult.html) is an important part of working with `nom`.  It's a specialized `Result`, where an `Ok` always returns a tuple of two values.  In this case, `IResult<&str, &str>` returns two string slices.  The first is the "remainder": this is everything that wasn't parsed.  The second part is the output from a successful parse; in this case we just return the string we matched.  For example, I could add this to my test, and it would work:
 
 ```rust
 assert_eq!(json_bool("false more"), Ok((" more", "false")));
@@ -65,11 +68,11 @@ assert_eq!(json_bool("false more"), Ok((" more", "false")));
 
 The `json_bool` function consumed the `false` part of the string, and left the rest for somebody else to deal with.
 
-When `json_bool` returns an error, that doesn't necessarily mean that something is wrong.  Our parser isn't going to give up.  It just means that this particular bit of grammar didn't match.  Depending on how we write our code, other parser functions might be called instead.  You can actually see this in action if you look at how the `alt` combinator works.  It first calls a parser function `tag("false")`, and if that returns an error, it instead feeds the same input into `tag("true")`, to see if it might succeed instead.
+When `json_bool` returns an error, that doesn't necessarily mean that something is wrong.  Our top-level parser isn't going to give up.  It just means that this particular bit of grammar didn't match.  Depending on how we write our code, other parser functions might be called instead.  You can actually see this in action if you look at how the `alt` combinator works.  It first calls a parser function `tag("false")`, and if that returns an error, it instead feeds the same input into `tag("true")`, to see if it might succeed instead.
 
 This probably still looks kind of strange, because `tag("false")` isn't a complete parser function; it's a function that returns a parser function.  See how our code calls `alt` and `tag` (twice)?  The return value from that code is another function, and that function gets called with the argument `(input)`.
 
-Don't be scared off by the intimidating-looking parameters of the `tag` function in the documentation-- look at the [examples](https://docs.rs/nom/5.1.1/nom/bytes/complete/fn.tag.html#example).  Despite the extra layer of indirection, it's still pretty easy to use.
+Don't be scared off by the intimidating-looking parameters of the `tag` function in the documentation-- look at the [examples](https://docs.rs/nom/5.1.2/nom/bytes/complete/fn.tag.html#example).  Despite the extra layer of indirection, it's still pretty easy to use.
 
 ## Part 3. Returning structs.
 
@@ -132,15 +135,15 @@ fn test_null() {
 
 First, notice that the parser functions' return value has changed.  The first part of the `IResult` tuple is still the remainder, so it's still `&str`.  But the second part now returns one of our new data structures.
 
-To change the return value, we use `nom`'s `map` combinator function.  It allows us to apply a closure to convert the matched string into something else: in the `json_bool` case, one of the `JsonBool` variants.  You will probably smell something funny about that code, though: we already matched the "true" and "false" strings once in the parser generated by the `tag` function, so why are we doing it again?  Your instincts are right on-- we should probably back up and fix that, but let's wrap up this discussion first.
+To change the return value, we use `nom`'s [`map`](https://docs.rs/nom/5.1.2/nom/combinator/fn.map.html) combinator function.  It allows us to apply a closure to convert the matched string into something else: in the `json_bool` case, one of the `JsonBool` variants.  You will probably smell something funny about that code, though: we already matched the `"true"` and `"false"` strings once in the parser generated by the `tag` function, so why are we doing it again?  Your instincts are right on-- we should probably back up and fix that, but let's wrap up this discussion first.
 
-The json_null function does almost exactly the same thing, though it doesn't need a `match` because it could only have matched one thing.
+The `json_null` function does almost exactly the same thing, though it doesn't need a `match` because it could only have matched one thing.
 
 We need to derive `PartialEq` and `Debug` for our structs and enums so that the `assert_eq!` will work.  Our tests are now using the new data structures `JsonBool` and `JsonNull`.
 
 ## Part 4. Another way of doing the same thing.
 
-In `nom`, there are often multiple ways of achieving the same goal.  In our case, `map` is a little bit overkill for this use case.  Let's instead use the `value` combinator instead, which is specialized for the case where we only care that the child parser succeeded.
+In `nom`, there are often multiple ways of achieving the same goal.  In our case, `map` is a little bit overkill for this use case.  Let's instead use the [`value`](https://docs.rs/nom/5.1.2/nom/combinator/fn.value.html) combinator instead, which is specialized for the case where we only care that the child parser succeeded.
 
 We'll also refactor `json_bool` so that we don't need to do extra work: we'll apply our combinator a little earlier, before we lose track of which branch we're on.
 
@@ -172,7 +175,7 @@ fn json_null(input: &str) -> IResult<&str, JsonNull> {
 
 Hopefully this is pretty straightforward.  The `value` combinator returns its first argument (e.g. `JsonNull {}`), if the second argument succeeds (`tag("null")`).  That description is a bit of a lazy mental shortcut, because `value` doesn't do any parsing itself.  Remember, it's a function that consumes one parser function and returns another parser function.  But because `nom` makes things so easy, it's sometimes a lot easier to use the lazy way of thinking when you're plugging combinators together like Lego bricks.
 
-Note that I added `Clone` to the data structures, because `value` requires it.  I also added `Copy` because these are trivially small structs & enums, out of habit.
+Note that I added `Clone` to the data structures, because `value` requires it.  I also added `Copy` because these are trivially small structs & enums.
 
 ## Part 5. Prepare to tree.
 
@@ -256,7 +259,7 @@ pub enum Node {
 }
 ```
 
-We'll need to do something when we encounter values that are grammatically correct (e.g. 1000 digits), that we can't handle.  This is a common problem, since most grammars don't attempt to set limits on the size of numbers.  Often there will be a limit set somewhere in the language/format specification, but it's not part of the formal grammar.  JSON doesn't set such limits, which can lead to compatibility problems between implementations.
+We'll need to do something when we encounter values that are grammatically correct (e.g. 1000 digits), that we can't handle.  This is a common problem, since most grammars don't attempt to set limits on the size of numbers.  Often there will be a limit set somewhere, but it's not part of the formal grammar.  JSON doesn't set such limits, which can lead to compatibility problems between implementations.
 
 It will be important in most parsers to set limits and make sure things fail gracefully.  In Rust you're not likely to have problems with buffer overruns, but it might be possible to trigger a denial of service, or perhaps even a crash by triggering excessive recursion.
 
@@ -309,7 +312,7 @@ fn uint(input: &str) -> IResult<&str, &str> {
 }
 ```
 
-Again, we use `alt` to specify that an integer is either `0`, or a non-`0` digit followed by zero or more additional digits.
+Again, we use `alt` to specify that an integer is either `0`, or a nonzero digit, possibly followed by more additional digits.
 
 The new combinator here is `recognize`.  Let's back up and look at the return type of this hypothetical function:
 
@@ -349,7 +352,7 @@ fn json_integer(input: &str) -> IResult<&str, &str> {
 }
 ```
 
-The `opt` is another `nom` combinator; it means "optional", and unsurprisingly it will return an `Option<T>` where `T` in this case is `&str` (because that's what `tag("-")` will returns.  But that return type is ignored; `recognize` will throw it away and just give us back the characters that were consumed by the successful match.
+The `opt` function is another `nom` combinator; it means "optional", and unsurprisingly it will return an `Option<T>` where `T` in this case is `&str` (because that's what `tag("-")` will returns.  But that return type is ignored; `recognize` will throw it away and just give us back the characters that were consumed by the successful match.
 
 Let's add one more step to our function: convert the resulting string into a `Node::Integer`.
 
@@ -371,7 +374,9 @@ fn json_integer(input: &str) -> IResult<&str, Node> {
 
 Finally, we discover a point where we'll need some error handling.  [`str::parse`](https://doc.rust-lang.org/std/primitive.str.html#method.parse) returns a `Result`, and will certainly return `Err` if we try to parse something too big.
 
-Let's leave that for later, though.  For now we'll finish up this section with a few unit tests:
+I am going to leave proper error handling until the end, so for now I will just `unwrap` the result.  This means the parser will panic if we give it a huge integer, so we definitely need to come back and fix this later.
+
+For now we'll finish up this section with a few unit tests:
 
 ```rust
 #[test]
@@ -454,7 +459,7 @@ fn json_literal(input: &str) -> IResult<&str, Node> {
 }
 ```
 
-I'll quit with the suspense and show you the broken part:
+And now we discover that something is wrong:
 
 ```rust
 #[test]
@@ -578,9 +583,9 @@ That's how RFC 8259 does things, anyway.  Different implementations may have sub
 
 This means there are many possible ways to represent a certain string. We're only building a parser, so we just need to make sure we can parse all the valid JSON representations (and hopefully return an error on all the invalid ones).
 
-The presence of escape patterns makes our job more difficult.  There are different ways we might choose to break down the problem.  I'm going to choose to break escape handling into a separate phase.  This means we will only use `nom` to do the lexing part (finding the bounds of the string literal), and we'll follow up with an "un-escaping" pass to decode the escaped characters.
+The presence of escape characters makes our job more difficult.  There are different ways we might choose to address this.  I'm going to choose to break escape handling into a separate phase.  This means we will only use `nom` to do the lexing part (finding the bounds of the string literal), and we'll follow up with an "un-escaping" pass to decode the escaped characters.
 
-Bad inputs must be rejected by one of the two phases, but we don't care which one.  For example, `"\ud800"` looks like a valid JSON string, but can't be decoded because U+D800 is a magic "surrogate" character, meaning it's half of a character than needs more than 16 bits to encode.  We should also reject things like `"\x"` (a nonexistent escape), `"\u001"` (not enough hex digits), and `"\"` (which is unterminated because the trailing quote is escaped).  We also need to reject "naked" (non-escaped) control characters (ASCII 0x00-0x1F), though for some reason 0x7F (ASCII DELETE) is legal.
+Bad inputs must be rejected by one of the two phases, but we don't care which one.  For example, `"\ud800"` looks like a valid JSON string, but can't be decoded because U+D800 is a magic "surrogate" character, meaning it's half of a character that needs more than 16 bits to encode.  We should also reject things like `"\x"` (a nonexistent escape), `"\u001"` (not enough hex digits), and `"\"` (which is unterminated because the trailing quote is escaped).  We also need to reject "naked" (non-escaped) control characters (ASCII 0x00-0x1F), though for some reason 0x7F (ASCII DELETE) is legal.
 
 Let's begin by building a parser for "a string of valid non-escaped characters": everything except control characters, backslash, and quote. We don't need to check the upper limit 0x10FFFF because those characters will never appear in a Rust `char`.
 
@@ -649,12 +654,12 @@ We've seen most of the pieces here before.
 
 The final `recognize` throws away the output of `many0` (a vector), and instead just returns to us the string that was matched. It's a little unfortunate that we're throwing away the information we developed about where escapes appear-- perhaps another implementation could do the unescaping work right here.  It seems pretty typical (in my limited experience) to have to make tradeoffs like this.  We're breaking the work into multiple phases, which may require a little bit of redundant effort, but our code gets a little simpler as a result.
 
-There's one subtle thing about these two layers that should be pointed out.  Both `nonescaped_string` and `escape_code` are parsers that return "one or more characters".  And then we use those to build a parser that returns "zero or more characters".  In fact, you can't build a "zero or more" parser using other "zero or more" components, because that could trigger an infinite loop: the outer parser could try to gather an infinite number of zero-sized subparser successes.  Typically `nom` combinators will throw an error instead of going into an infinite loop.
+There's one subtle thing about these two layers that should be pointed out.  Both `nonescaped_string` and `escape_code` are parsers that return "one or more characters".  And then we use those to build a parser that returns "zero or more characters".  In fact, you can't build a "zero or more" parser using other "zero or more" components, because that could trigger an infinite loop: the outer parser could try to gather an infinite number of empty subparser successes.  Typically `nom` combinators will return an error instead of going into an infinite loop.
 
 The next step is pretty simple: the string body must be wrapped in quotes.
 
 ```rust
-+use nom::sequence::delimited;
+use nom::sequence::delimited;
 
 fn json_string(input: &str) -> IResult<&str, &str> {
     delimited(
@@ -666,7 +671,7 @@ fn json_string(input: &str) -> IResult<&str, &str> {
 }
 ```
 
-This is the first time we've used `delimited`.  It just throws away the first and third arguments (here, the quote marks), and returns whatever the middle parser matched.
+This is the first time we've used `delimited`.  It runs three sub-parsers, returning the result of the middle one. The result from the first and third arguments (the quote characters) are discarded.
 
 At this point I should plug in some code to do un-escaping. Because this code doesn't use `nom` and doesn't really help us understand how to write a `nom` parser, I'm going to skip the explanation and just pull the [escape8259](https://docs.rs/escape8259/0.5.0/escape8259/) crate that does this part.  A call to un-escape a string is pretty simple:
 
@@ -693,7 +698,7 @@ fn string_literal(input: &str) -> IResult<&str, String> {
 }
 ```
 
-We also need to update our `Node` enum to include a `Str` variant, and make that our final output.
+We also need to update our `Node` enum to include a string variant (we'll call this `Str`), and make that our final output.
 
 ```rust
 pub enum Node {
@@ -784,7 +789,7 @@ fn json_array(input: &str) -> IResult<&str, Node> {
 }
 ```
 
-That was surprisingly easy.  The only new thing we needed was `separated_list`, which alternates between two subparsers.  The first argument is the "separator", and its result is thrown away; it returns a vector of results from the second parser.  It will match zero or more elements; `nom` has a `separated_nonempty_list` if you want one-or-more.
+That was surprisingly easy.  The only new thing we needed was `separated_list`, which alternates between two subparsers.  The first argument is the "separator", and its result is thrown away; we get a vector of results from the second parser.  It will match zero or more elements; `nom` has a `separated_nonempty_list` if you want one-or-more.
 
 Objects are up next; they're a little more complicated so let's implement them as two separate functions.
 
@@ -841,7 +846,7 @@ The only difference is the space character after the comma.  We forgot to handle
 
 In fact, we haven't handled whitespace anywhere.  Whitespace could appear anywhere: before or after values or any punctuation (braces, brackets, comma, or colon).
 
-We could build our own whitespace-matching parser.  All we want is a parser function that will match zero or more spaces, tabs, carriage returns, and newlines. But it turns out that's exactly what `nom::character::complete::multispace0` does, so we can do that.
+To ignore whitespace, we need a parser function that matches whitespace.  We could easily build one, `nom` includes one that matches our needs exactly: `nom::character::complete::multispace0`.
 
 That means we need to do a bunch of substitutions, things like:
 ```rust
@@ -854,7 +859,7 @@ need to become
 
 Which adds a lot of clutter, and is kind of hard to read.  Maybe instead we should write a combinator of our own to make this a little more compact.  This isn't necessary-- the result will emit exactly the same code as the above.  The only reason I'm going to tackle this is it provides a little bit of insight into the pile of generic parameters you see if you look at the documentation for `nom` combinators.  If you don't care, feel free to skip this section.
 
-First, let's write a combinator that does nothing, other than apply a combinator we specify.
+First, let's write a combinator that does nothing, other than apply a parser we specify.
 ```rust
 fn identity<F, I, O, E>(f: F) -> impl Fn(I) -> IResult<I, O, E>
 where
@@ -864,7 +869,7 @@ where
 }
 ```
 
-That looks pretty intimidating.  But that's how most of the `nom` combinators look, so if we can unpack that, we'll have a little more understanding how `nom` is built.
+That looks pretty intimidating.  But so do most of the built-in `nom` combinators, so if we can understand this combinator function, we'll have a little easier time understanding other parts of `nom`.
 
 Let's see if we can make some sense of all those generic parameters.
 
@@ -902,3 +907,19 @@ where
 ```
 
 Was that worth it?  Maybe not for this program.  But it's interesting to see what's involved in building our own combinators.  Maybe the `nom` function documentation will look a little less scary, too.
+
+Now that we have a useful multispace-handling combinator, we can sprinkle it around all the places where we need to ignore whitespace.  For example:
+
+```rust
+fn json_array(input: &str) -> IResult<&str, Node> {
+    let parser = delimited(
+        spacey(tag("[")),
+        separated_list(spacey(tag(",")), json_value),
+        spacey(tag("]")),
+    );
+    map(parser, |v| {
+        Node::Array(v)
+    })
+    (input)
+}
+```

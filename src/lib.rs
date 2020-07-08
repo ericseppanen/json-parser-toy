@@ -1,11 +1,35 @@
 use nom::{branch::alt, IResult};
 use nom::bytes::complete::{tag, take_while1};
 use nom::character::complete::{one_of, digit0, digit1, multispace0};
-use nom::combinator::{map, map_res, opt, recognize, value};
+use nom::combinator::{all_consuming, map, opt, recognize, value};
+use nom::error::{ErrorKind, ParseError};
 use nom::multi::{many0, separated_list};
 use nom::sequence::{delimited, pair, separated_pair, tuple};
 use escape8259::unescape;
 
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum JSONParseError {
+    #[error("bad integer")]
+    BadInt,
+    #[error("bad float")]
+    BadFloat,
+    #[error("bad escape sequence")]
+    BadEscape,
+    #[error("unknown parser error")]
+    Unparseable,
+}
+
+impl<I> ParseError<I> for JSONParseError {
+    fn from_error_kind(_input: I, _kind: ErrorKind) -> Self {
+        // Because JSONParseError is a simplified public error type,
+        // we discard the nom error parameters.
+        JSONParseError::Unparseable
+    }
+
+    fn append(_: I, _: ErrorKind, other: Self) -> Self {
+        other
+    }
+}
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Node {
@@ -18,7 +42,7 @@ pub enum Node {
     Object(Vec<(String, Node)>),
 }
 
-fn json_value(input: &str) -> IResult<&str, Node> {
+fn json_value(input: &str) -> IResult<&str, Node, JSONParseError> {
     spacey(alt((
         json_array,
         json_object,
@@ -41,7 +65,7 @@ where
     delimited(multispace0, f, multispace0)
 }
 
-fn json_array(input: &str) -> IResult<&str, Node> {
+fn json_array(input: &str) -> IResult<&str, Node, JSONParseError> {
     let parser = delimited(
         spacey(tag("[")),
         separated_list(spacey(tag(",")), json_value),
@@ -54,12 +78,12 @@ fn json_array(input: &str) -> IResult<&str, Node> {
 }
 
 // "key: value", where key and value are any JSON type.
-fn object_member(input: &str) -> IResult<&str, (String, Node)> {
+fn object_member(input: &str) -> IResult<&str, (String, Node), JSONParseError> {
     separated_pair(string_literal, spacey(tag(":")), json_value)
     (input)
 }
 
-fn json_object(input: &str) -> IResult<&str, Node> {
+fn json_object(input: &str) -> IResult<&str, Node, JSONParseError> {
     let parser = delimited(
         spacey(tag("{")),
         separated_list(
@@ -85,7 +109,7 @@ fn is_nonescaped_string_char(c: char) -> bool {
 }
 
 // One or more unescaped text characters
-fn nonescaped_string(input: &str) -> IResult<&str, &str> {
+fn nonescaped_string(input: &str) -> IResult<&str, &str, JSONParseError> {
     take_while1(is_nonescaped_string_char)
     (input)
 }
@@ -95,7 +119,7 @@ fn nonescaped_string(input: &str) -> IResult<&str, &str> {
 // - general-purpose \uXXXX
 // Note: we don't enforce that escape codes are valid here.
 // There must be a decoder later on.
-fn escape_code(input: &str) -> IResult<&str, &str> {
+fn escape_code(input: &str) -> IResult<&str, &str, JSONParseError> {
     recognize(
         pair(
             tag("\\"),
@@ -116,7 +140,7 @@ fn escape_code(input: &str) -> IResult<&str, &str> {
 }
 
 // Zero or more text characters
-fn string_body(input: &str) -> IResult<&str, &str> {
+fn string_body(input: &str) -> IResult<&str, &str, JSONParseError> {
     recognize(
         many0(
             alt((
@@ -128,19 +152,21 @@ fn string_body(input: &str) -> IResult<&str, &str> {
     (input)
 }
 
-fn string_literal(input: &str) -> IResult<&str, String> {
-    let parser = delimited(
+fn string_literal(input: &str) -> IResult<&str, String, JSONParseError> {
+    let (remain, raw_string) = delimited(
         tag("\""),
         string_body,
         tag("\"")
-    );
-    map_res(parser, |s| {
-        unescape(s)
-    })
-    (input)
+    )
+    (input)?;
+
+    match unescape(raw_string) {
+        Ok(s) => Ok((remain, s)),
+        Err(_) => Err(nom::Err::Failure(JSONParseError::BadEscape)),
+    }
 }
 
-fn json_string(input: &str) -> IResult<&str, Node> {
+fn json_string(input: &str) -> IResult<&str, Node, JSONParseError> {
     map(string_literal, |s| {
         Node::Str(s)
     })
@@ -152,13 +178,13 @@ fn json_string(input: &str) -> IResult<&str, Node> {
 // anychar("0123456789"),
 // we could also extract the character value as u32 and do range checks...
 
-fn digit1to9(input: &str) -> IResult<&str, char> {
+fn digit1to9(input: &str) -> IResult<&str, char, JSONParseError> {
     one_of("123456789")
     (input)
 }
 
 // unsigned_integer = zero / ( digit1-9 *DIGIT )
-fn uint(input: &str) -> IResult<&str, &str> {
+fn uint(input: &str) -> IResult<&str, &str, JSONParseError> {
     alt((
         tag("0"),
         recognize(
@@ -171,19 +197,22 @@ fn uint(input: &str) -> IResult<&str, &str> {
     (input)
 }
 
-fn json_integer(input: &str) -> IResult<&str, Node> {
-    let parser = recognize(
+fn integer_body(input: &str) -> IResult<&str, &str, JSONParseError> {
+    recognize(
         pair(
             opt(tag("-")),
             uint
         )
-    );
-    map(parser, |s| {
-        // FIXME: unwrap() may panic if the integer is too big.
-        let n = s.parse::<i64>().unwrap();
-        Node::Integer(n)
-    })
+    )
     (input)
+}
+
+fn json_integer(input: &str) -> IResult<&str, Node, JSONParseError> {
+    let (remain, raw_int) = integer_body(input)?;
+    match raw_int.parse::<i64>() {
+        Ok(i) => Ok((remain, Node::Integer(i))),
+        Err(_) => Err(nom::Err::Failure(JSONParseError::BadInt)),
+    }
 }
 
 // number = [ minus ] int [ frac ] [ exp ]
@@ -198,7 +227,7 @@ fn json_integer(input: &str) -> IResult<&str, Node> {
 //       plus = %x2B                ; +
 //       zero = %x30                ; 0
 
-fn frac(input: &str) -> IResult<&str, &str> {
+fn frac(input: &str) -> IResult<&str, &str, JSONParseError> {
     recognize(
         pair(
             tag("."),
@@ -208,7 +237,7 @@ fn frac(input: &str) -> IResult<&str, &str> {
     (input)
 }
 
-fn exp(input: &str) -> IResult<&str, &str> {
+fn exp(input: &str) -> IResult<&str, &str, JSONParseError> {
     recognize(
         tuple((
             tag("e"),
@@ -222,8 +251,8 @@ fn exp(input: &str) -> IResult<&str, &str> {
     (input)
 }
 
-fn json_float(input: &str) -> IResult<&str, Node> {
-    let parser = recognize(
+fn float_body(input: &str) -> IResult<&str, &str, JSONParseError> {
+    recognize(
         tuple((
             opt(tag("-")),
             uint,
@@ -235,16 +264,19 @@ fn json_float(input: &str) -> IResult<&str, Node> {
                 exp
             )),
         ))
-    );
-    map(parser, |s| {
-        // FIXME: unwrap() may panic if the value is out of range
-        let n = s.parse::<f64>().unwrap();
-        Node::Float(n)
-    })
+    )
     (input)
 }
 
-fn json_bool(input: &str) -> IResult<&str, Node> {
+fn json_float(input: &str) -> IResult<&str, Node, JSONParseError> {
+    let (remain, raw_float) = float_body(input)?;
+    match raw_float.parse::<f64>() {
+        Ok(f) => Ok((remain, Node::Float(f))),
+        Err(_) => Err(nom::Err::Failure(JSONParseError::BadFloat)),
+    }
+}
+
+fn json_bool(input: &str) -> IResult<&str, Node, JSONParseError> {
     alt((
         value(Node::Bool(false), tag("false")),
         value(Node::Bool(true), tag("true")),
@@ -252,7 +284,7 @@ fn json_bool(input: &str) -> IResult<&str, Node> {
     (input)
 }
 
-fn json_null(input: &str) -> IResult<&str, Node> {
+fn json_null(input: &str) -> IResult<&str, Node, JSONParseError> {
     value(Node::Null, tag("null"))
     (input)
 }
@@ -275,7 +307,7 @@ fn test_integer() {
     assert_eq!(json_integer("-123"), Ok(("", Node::Integer(-123))));
     assert_eq!(json_integer("0"), Ok(("", Node::Integer(0))));
     assert_eq!(json_integer("01"), Ok(("1", Node::Integer(0))));
-    // FIXME: test too-large integers once error handling is in place.
+    assert_eq!(json_integer("9999999999999999999"), Err(nom::Err::Failure(JSONParseError::BadInt)));
 }
 
 #[test]
@@ -284,7 +316,16 @@ fn test_float() {
     assert_eq!(json_float("-123.99"), Ok(("", Node::Float(-123.99))));
     assert_eq!(json_float("6.02214086e23"), Ok(("", Node::Float(6.02214086e23))));
     assert_eq!(json_float("-1e6"), Ok(("", Node::Float(-1000000.0))));
-    // FIXME: test too-large floats once error handling is in place.
+    // f64::from_str overflows to infinity instead of throwing an error
+    assert_eq!(json_float("1e9999"), Ok(("", Node::Float(f64::INFINITY))));
+
+    // Although there are some literal floats that will return errors,
+    // they are considered bugs so we shouldn't expect that behavior forever.
+    // See https://github.com/rust-lang/rust/issues/31407
+    // assert_eq!(
+    //     json_float("2.47032822920623272e-324"),
+    //     Err(nom::Err::Failure(JSONParseError::BadFloat))
+    // );
 }
 
 #[test]
@@ -317,6 +358,9 @@ fn test_string() {
     assert!(json_string("abc").is_err());
     // An unterminated string (because the trailing quote is escaped)
     assert!(json_string(r#""\""#).is_err());
+
+    // Parses correctly but has escape errors due to incomplete surrogate pair.
+    assert_eq!(json_string(r#""\ud800""#), Err(nom::Err::Failure(JSONParseError::BadEscape)));
 }
 
 #[test]

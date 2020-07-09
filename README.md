@@ -995,3 +995,33 @@ Note that `json_integer` works differently from all the other parsers we've writ
 This can be a useful technique when the `nom` combinators don't supply exactly what you need. Here, I first tried using `map_res` to parse the int, but it turns out that `map_res` always throws away the error value returned by the closure, and substitutes its own error (with kind `MapRes`).
 
 The same approach works for string escaping errors and float parsing errors, though float overflow in Rust results in infinity, not an error. It's fairly hard to trigger a float parse error (though it's possible, due to a [bug](https://github.com/rust-lang/rust/issues/31407) in the rust core library).
+
+## Part 12. Finalization.
+
+There's one more `nom`-specific step that we probably want. Assuming our code is a library, meant to be used by other programs, we don't want `nom::IResult` to show up as our result. Instead, we've prefer a plain `Result<Node, JSONParseError>`.
+
+We can use `all_consuming` to ensure that all input was matched.  Unfortunately, there doesn't seem to be a simple `nom` shortcut for translating the error. We can do this ourselves:
+
+```rust
+
+use nom::combinator::all_consuming;
+
+pub fn parse_json(input: &str) -> Result<Node, JSONParseError> {
+    let (_, result) = all_consuming(json_value)(input).map_err(|nom_err| {
+        match nom_err {
+            nom::Err::Incomplete(_) => unreachable!(),
+            nom::Err::Error(e) => e,
+            nom::Err::Failure(e) => e,
+        }
+    })?;
+    Ok(result)
+}
+```
+
+We haven't talked yet about the three [`nom::Err`](https://docs.rs/nom/5.1/nom/enum.Err.html) variants.
+
+- `Incomplete` is only used by `nom` streaming parsers. We don't use those, so we can just mark that branch `unreachable!` (which would panic).
+- `Error` is what we usually see when a parser has a problem.  Something didn't match the expected grammar.
+- `Failure` appears less often.  It means that the input could only be parsed one way, but a parser decided that it was invalid. Unlike `Error`, this error is propagated upward without trying any alternative paths (if something like `alt` is present).
+
+You may have noticed that our code does use `Failure`: that's what we return when there is an numeric conversion error or a bad escape code. If we accidentally used `Error` instead of `Failure`, the parsers might work correctly, but we would return the wrong error type.  The reason is that the nom `alt` parser would keep trying other parsers, and if all of them fail, there's no way for `alt` to know which error is the right one-- it usually just returns the last error.

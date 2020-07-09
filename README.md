@@ -4,6 +4,8 @@ This is a demonstration of building a parser in Rust using the [`nom`](https://d
 
 Since I like Rust a lot, and I need an excuse to do more writing about Rust, I thought I'd do another demonstration project.  I decided to choose a simple syntax, to keep this a short project. So I'm going to build a parser for JSON.
 
+All of the source code and markdown source for this post is [available on GitHub](https://github.com/ericseppanen/json-parser-toy).  If you see anything wrong, please let me know by raising an issue there.
+
 <!-- more -->
 
 There are a million JSON parsers in the world already, so I don't expect this code to have much non-educational value.  But, hey, you never know.
@@ -1025,3 +1027,7 @@ We haven't talked yet about the three [`nom::Err`](https://docs.rs/nom/5.1/nom/e
 - `Failure` appears less often.  It means that the input could only be parsed one way, but a parser decided that it was invalid. Unlike `Error`, this error is propagated upward without trying any alternative paths (if something like `alt` is present).
 
 You may have noticed that our code does use `Failure`: that's what we return when there is an numeric conversion error or a bad escape code. If we accidentally used `Error` instead of `Failure`, the parsers might work correctly, but we would return the wrong error type.  The reason is that the nom `alt` parser would keep trying other parsers, and if all of them fail, there's no way for `alt` to know which error is the right one-- it usually just returns the last error.
+
+## Thanks for reading!
+
+This ended up being a lot longer than I originally planned, and along the way I discovered several things that I'd been doing wrong in my own parsers.  There are probably a few things that I've still missed; if you notice something, feel free to open an issue at this page's [GitHub repo](https://github.com/ericseppanen/json-parser-toy).

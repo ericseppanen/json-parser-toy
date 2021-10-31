@@ -327,16 +327,16 @@ fn test_float() {
     assert_eq!(json_float("-123.99"), Ok(("", Node::Float(-123.99))));
     assert_eq!(json_float("6.02214086e23"), Ok(("", Node::Float(6.02214086e23))));
     assert_eq!(json_float("-1e6"), Ok(("", Node::Float(-1000000.0))));
+    assert_eq!(json_float("1.0e+3"), Ok(("", Node::Float(1000.0))));
+
+
     // f64::from_str overflows to infinity instead of throwing an error
     assert_eq!(json_float("1e9999"), Ok(("", Node::Float(f64::INFINITY))));
 
-    // Although there are some literal floats that will return errors,
-    // they are considered bugs so we shouldn't expect that behavior forever.
-    // See https://github.com/rust-lang/rust/issues/31407
-    // assert_eq!(
-    //     json_float("2.47032822920623272e-324"),
-    //     Err(nom::Err::Failure(JSONParseError::BadFloat))
-    // );
+    // odd looking but still valid.
+    assert_eq!(json_float("0e+42949672970"), Ok(("", Node::Float(0.0))));
+    assert_eq!(json_float("9e00010"), Ok(("", Node::Float(90000000000.0))));
+    assert_eq!(json_float("-0.0e-99999999999999999999999999"), Ok(("", Node::Float(-0.0))));
 }
 
 #[test]

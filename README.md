@@ -74,7 +74,7 @@ function, just to verify that we can build and test our code. We'll try to
 parse the strings "true" and "false". In other words, the grammar for our json
 subset is:
 
-```text
+```txt
 value = "false" / "true"
 ```
 
@@ -340,7 +340,7 @@ tackle numbers first. Referring to
 [RFC8259](https://tools.ietf.org/html/rfc8259), the grammar for a JSON number
 is:
 
-```text
+```txt
 number = [ minus ] int [ frac ] [ exp ]
 
       decimal-point = %x2E       ; .
@@ -397,7 +397,7 @@ fn digit1to9(input: &str) -> IResult<&str, &str> {
 ```
 
 Unfortunately, it doesn't compile:
-```text
+```txt
 error[E0308]: mismatched types
   --> src/lib.rs:21:5
    |
@@ -632,7 +632,7 @@ fn test_literal() {
 }
 ```
 
-```text
+```txt
 test test_literal ... FAILED
 
 failures:
@@ -659,7 +659,7 @@ fn json_literal(input: &str) -> IResult<&str, Node> {
 }
 ```
 
-```text
+```txt
 test test_literal ... FAILED
 
 failures:

@@ -715,7 +715,7 @@ fn json_float(input: &str) -> IResult<&str, Node> {
 
 This code has one small annoyance, though it's not a problem in the overall
 JSON context. Imagine that we took this `json_float` parser code, and tried to
-reuse it in another language, where this other language's grammer would allow
+reuse it in another language, where this other language's grammar would allow
 the input `123.size()`. This code would `peek` ahead and see the `.`
 character, and because of that it would parse `123` as a float rather than an
 integer. In other words, this `json_float` implementation decides that this
@@ -1037,7 +1037,7 @@ fn json_value(input: &str) -> -> IResult<&str, Node> {
 }
 ```
 
-An array can be heterogenous (different value types, e.g. `[1, "foo", true]`).
+An array can be heterogeneous (different value types, e.g. `[1, "foo", true]`).
 Each object member must have a string for its key, and may have any value
 type. An object might be `{"a": 1, "b": false}`. Arrays and objects can be
 nested arbitrarily.

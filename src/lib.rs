@@ -3,7 +3,7 @@ use nom::bytes::complete::{tag, take_while1};
 use nom::character::complete::{one_of, digit0, digit1, multispace0};
 use nom::combinator::{all_consuming, map, opt, recognize, value};
 use nom::error::{ErrorKind, ParseError};
-use nom::multi::{many0, separated_list};
+use nom::multi::{many0, separated_list0};
 use nom::sequence::{delimited, pair, separated_pair, tuple};
 use escape8259::unescape;
 
@@ -66,9 +66,9 @@ fn json_value(input: &str) -> IResult<&str, Node, JSONParseError> {
     (input)
 }
 
-fn spacey<F, I, O, E>(f: F) -> impl Fn(I) -> IResult<I, O, E>
+fn spacey<F, I, O, E>(f: F) -> impl FnMut(I) -> IResult<I, O, E>
 where
-    F: Fn(I) -> IResult<I, O, E>,
+    F: FnMut(I) -> IResult<I, O, E>,
     I: nom::InputTakeAtPosition,
     <I as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
     E: nom::error::ParseError<I>,
@@ -79,7 +79,7 @@ where
 fn json_array(input: &str) -> IResult<&str, Node, JSONParseError> {
     let parser = delimited(
         spacey(tag("[")),
-        separated_list(spacey(tag(",")), json_value),
+        separated_list0(spacey(tag(",")), json_value),
         spacey(tag("]")),
     );
     map(parser, |v| {
@@ -97,7 +97,7 @@ fn object_member(input: &str) -> IResult<&str, (String, Node), JSONParseError> {
 fn json_object(input: &str) -> IResult<&str, Node, JSONParseError> {
     let parser = delimited(
         spacey(tag("{")),
-        separated_list(
+        separated_list0(
             spacey(tag(",")),
             object_member
         ),

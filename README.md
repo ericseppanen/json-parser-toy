@@ -1,9 +1,11 @@
 # Let's build a parser!
 
+> Updated 10/2021 to use `nom 7.0`!
+
 This is a demonstration of building a parser in Rust using the
-[`nom`](https://docs.rs/nom/5.1.2/nom/) crate. I recently built a parser for
-the [`cddl-cat`](https://docs.rs/cddl-cat/latest/cddl_cat/) crate using nom,
-and I found it a surprisingly not-terrible experience, much better than my past
+[`nom`](https://docs.rs/nom/) crate. I recently built a parser for
+the [`cddl-cat`](https://docs.rs/cddl-cat/) crate using nom,
+and I found it a surprisingly pleasant experience, much better than my past
 experiences with other parser-generators in other languages.
 
 Since I like Rust a lot, and I need an excuse to do more writing about Rust, I
@@ -28,9 +30,8 @@ authoritative reference for the JSON grammar.
 2. I'm not going to build a JSON serializer. My goal will only be to consume
 JSON text and output a structured tree containing the data (a lot like
 [`serde_json::Value`](https://docs.serde.rs/serde_json/value/enum.Value.html) ).
-3. I'll be using [`nom` 5.1](https://docs.rs/nom/5.1.2/nom/). There is a newer
-6.0 alpha release out at the time of this writing, but I'm going to ignore it
-until it has a stable version number.
+3. I'll be using [`nom` 7.0](https://docs.rs/nom/7.0/nom/). I'll try to keep
+this post updated when new major versions are released.
 4. Some of the code I write will violate the usual `rustfmt` style. This isn't
 because I hate `rustfmt`; far from it! But as you'll see, `nom` code can look a
 little weird, so it's sometimes more readable if we bend the styling rules a
@@ -45,35 +46,30 @@ adjust to writing a parser with `nom`, because it doesn't work by first
 tokenizing the input and then parsing those tokens. Both of those steps can be
 tackled at once.
 
-I'll be using only the `nom` functions, not the `nom` macros. There are
-basically two implementations of everything in `nom` (a function and a macro),
-though the two are from different development eras and aren't exactly the
-same. I'm inclined to always choose functions over macros when possible,
-because it's more likely to lead to a friendly programmer experience. Note,
-however, that a lot of the `nom` documentation only refers to the older macro
-implementations of things, and so do many examples and tutorials. So don't be
-surprised when you see macros everywhere. Don't be afraid, either: the `nom`
-functions work great, are stable, and provide most of the things you need.
+Older versions of `nom` used a lot of macros. Starting with `nom 7.0`, the
+macros are gone, and the only way to use nom is with the function combinators.
+This is a nice change, because while `nom` combinators can be tricky, the
+function-based style is a lot friendlier to work with than the old macros.
 
 A bit of advice for reading the
-[`nom` documentation](https://docs.rs/crate/nom/5.1.2), if you're following
+[`nom` documentation](https://docs.rs/nom/7.0.0/nom/), if you're following
 along with this implementation:
-- Start from the [modules](https://docs.rs/nom/5.1.2/nom/#modules) section of
+- Start from the [modules](https://docs.rs/nom/7.0.0/nom/#modules) section of
 the documentation.
 - We'll be starting with the
-[character](https://docs.rs/nom/5.1.2/nom/character/index.html) and
-[number](https://docs.rs/nom/5.1.2/nom/number/index.html) modules.
+[character](https://docs.rs/nom/7.0.0/nom/character/index.html) and
+[number](https://docs.rs/nom/7.0.0/nom/number/index.html) modules.
 - We'll use the
-[combinator](https://docs.rs/nom/5.1.2/nom/combinator/index.html),
-[multi](https://docs.rs/nom/5.1.2/nom/multi/index.html),
-[sequence](https://docs.rs/nom/5.1.2/nom/sequence/index.html),
-and [branch](https://docs.rs/nom/5.1.2/nom/branch/index.html) modules to tie
+[combinator](https://docs.rs/nom/7.0.0/nom/combinator/index.html),
+[multi](https://docs.rs/nom/7.0.0/nom/multi/index.html),
+[sequence](https://docs.rs/nom/7.0.0/nom/sequence/index.html),
+and [branch](https://docs.rs/nom/7.0.0/nom/branch/index.html) modules to tie
 things together. I'll try to link to the relevant documentation as we go.
 
 ## Part 2. Our first bit of parser code.
 
 I've started a new library project (`cargo init --lib json-parser-toy`), and
-added the `nom 5.1` dependency in `Cargo.toml`. Let's add a very simple parser
+added the `nom 7.0` dependency in `Cargo.toml`. Let's add a very simple parser
 function, just to verify that we can build and test our code. We'll try to
 parse the strings "true" and "false". In other words, the grammar for our json
 subset is:
@@ -102,18 +98,18 @@ fn test_bool() {
 }
 ```
 
-I got the [`tag`](https://docs.rs/nom/5.1.2/nom/bytes/complete/fn.tag.html)
+I got the [`tag`](https://docs.rs/nom/7.0.0/nom/bytes/complete/fn.tag.html)
 function from `nom::bytes`, though it's not specific to byte-arrays; it works
 just fine with text strings as well. It's not a big deal; it's just a minor
 quirk of the way `nom` is organized.
 
-We use [`alt`](https://docs.rs/nom/5.1.2/nom/branch/fn.alt.html) to express
+We use [`alt`](https://docs.rs/nom/7.0.0/nom/branch/fn.alt.html) to express
 "one of these choices". This is a common style in `nom`, and we'll see it
 again when we use other combinators from `nom::sequence`.
 
 There are a few other things that should be explained.
 
-[`IResult`](https://docs.rs/nom/5.1.2/nom/type.IResult.html) is an important
+[`IResult`](https://docs.rs/nom/7.0.0/nom/type.IResult.html) is an important
 part of working with `nom`. It's a specialized `Result`, where an `Ok` always
 returns a tuple of two values. In this case, `IResult<&str, &str>` returns two
 string slices. The first is the "remainder": this is everything that wasn't
@@ -143,7 +139,7 @@ another function, and that function gets called with the argument `(input)`.
 
 Don't be scared off by the intimidating-looking parameters of the `tag`
 function in the documentation— look at the
-[examples](https://docs.rs/nom/5.1.2/nom/bytes/complete/fn.tag.html#example).
+[examples](https://docs.rs/nom/7.0.0/nom/bytes/complete/fn.tag.html#example).
 Despite the extra layer of indirection, it's still pretty easy to use.
 
 ## Part 3. Returning structs.
@@ -212,7 +208,7 @@ part of the `IResult` tuple is still the remainder, so it's still `&str`. But
 the second part now returns one of our new data structures.
 
 To change the return value, we use `nom`'s
-[`map`](https://docs.rs/nom/5.1.2/nom/combinator/fn.map.html) combinator
+[`map`](https://docs.rs/nom/7.0.0/nom/combinator/fn.map.html) combinator
 function. It allows us to apply a closure to convert the matched string into
 something else: in the `json_bool` case, one of the `JsonBool` variants. You
 will probably smell something funny about that code, though: we already matched
@@ -231,7 +227,7 @@ We need to derive `PartialEq` and `Debug` for our structs and enums so that the
 
 In `nom`, there are often multiple ways of achieving the same goal. In our
 case, `map` is a little bit overkill for this use case. Let's instead use the
-[`value`](https://docs.rs/nom/5.1.2/nom/combinator/fn.value.html) combinator
+[`value`](https://docs.rs/nom/7.0.0/nom/combinator/fn.value.html) combinator
 instead, which is specialized for the case where we only care that the child
 parser succeeded.
 
@@ -513,6 +509,7 @@ fn json_integer(input: &str) -> IResult<&str, Node> {
         )
     );
     map(parser, |s| {
+        // FIXME: unwrap() may panic if the value is out of range
         let n = s.parse::<i64>().unwrap();
         Node::Integer(n)
     })
@@ -1022,6 +1019,24 @@ pub enum Node {
 }
 ```
 
+Since `Node` now includes types other than literal values, let's rename
+`json_literal` to `json_value`:
+
+```rust
+fn json_value(input: &str) -> -> IResult<&str, Node> {
+    spacey(alt((
+        json_array,
+        json_object,
+        json_string,
+        json_float,
+        json_integer,
+        json_bool,
+        json_null
+    )))
+    (input)
+}
+```
+
 An array can be heterogenous (different value types, e.g. `[1, "foo", true]`).
 Each object member must have a string for its key, and may have any value
 type. An object might be `{"a": 1, "b": false}`. Arrays and objects can be
@@ -1030,12 +1045,12 @@ nested arbitrarily.
 Let's implement arrays first.
 
 ```rust
-use nom::multi::separated_list;
+use nom::multi::separated_list0;
 
 fn json_array(input: &str) -> IResult<&str, Node> {
     let parser = delimited(
         tag("["),
-        separated_list(tag(","), json_value),
+        separated_list0(tag(","), json_value),
         tag("]")
     );
     map(parser, |v| {
@@ -1045,11 +1060,11 @@ fn json_array(input: &str) -> IResult<&str, Node> {
 }
 ```
 
-That was surprisingly easy. The only new thing we needed was `separated_list`,
+That was surprisingly easy. The only new thing we needed was `separated_list0`,
 which alternates between two subparsers. The first argument is the
 "separator", and its result is thrown away; we get a vector of results from the
 second parser. It will match zero or more elements; `nom` has a
-`separated_nonempty_list` if you want one-or-more.
+`separated_list1` if you want one-or-more.
 
 Objects are up next; they're a little more complicated so let's implement them
 as two separate functions.
@@ -1065,7 +1080,7 @@ fn object_member(input: &str) -> IResult<&str, (String, Node)> {
 fn json_object(input: &str) -> IResult<&str, Node> {
     let parser = delimited(
         tag("{"),
-        separated_list(
+        separated_list0(
             tag(","),
             object_member
         ),
@@ -1136,9 +1151,9 @@ First, let's write a combinator that does nothing, other than apply a parser we
 specify.
 
 ```rust
-fn identity<F, I, O, E>(f: F) -> impl Fn(I) -> IResult<I, O, E>
+fn identity<F, I, O, E>(f: F) -> impl FnMut(I) -> IResult<I, O, E>
 where
-    F: Fn(I) -> IResult<I, O, E>,
+    F: FnMut(I) -> IResult<I, O, E>,
 {
     f
 }
@@ -1162,7 +1177,7 @@ etc.) The `E` is the parser error type, and we can continue ignoring that for
 now since we've only used the default.
 
 Our combinator returns a closure. So its return type is
-`Fn(I) -> IResult<I, O, E>`. That looks the same as `F`, but for all cases
+`FnMut(I) -> IResult<I, O, E>`. That looks the same as `F`, but for all cases
 other than `identity` we'll return a different closure than the input, so we
 will need to spell out the return type.
 
@@ -1175,9 +1190,9 @@ Anyway, let's write a combinator that wraps its input in a `delimited` with
 `multispace0` on both sides.
 
 ```rust
-fn spacey<F, I, O, E>(f: F) -> impl Fn(I) -> IResult<I, O, E>
+fn spacey<F, I, O, E>(f: F) -> impl FnMut(I) -> IResult<I, O, E>
 where
-    F: Fn(I) -> IResult<I, O, E>,
+    F: FnMut(I) -> IResult<I, O, E>,
 {
     delimited(multispace0, f, multispace0)
 }
@@ -1190,9 +1205,9 @@ trait bounds as well. Copying those trait bounds over to our function will
 work:
 
 ```rust
-fn spacey<F, I, O, E>(f: F) -> impl Fn(I) -> IResult<I, O, E>
+fn spacey<F, I, O, E>(f: F) -> impl FnMut(I) -> IResult<I, O, E>
 where
-    F: Fn(I) -> IResult<I, O, E>,
+    F: FnMut(I) -> IResult<I, O, E>,
     I: nom::InputTakeAtPosition,
     <I as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
     E: nom::error::ParseError<I>,
@@ -1212,7 +1227,7 @@ around all the places where we need to ignore whitespace. For example:
 fn json_array(input: &str) -> IResult<&str, Node> {
     let parser = delimited(
         spacey(tag("[")),
-        separated_list(spacey(tag(",")), json_value),
+        separated_list0(spacey(tag(",")), json_value),
         spacey(tag("]")),
     );
     map(parser, |v| {
@@ -1253,8 +1268,8 @@ pub enum JSONParseError {
 
 Because `nom` error handling uses generic parameters, it can be difficult to
 see how to best implement a custom error type. There is a good minimal example
-of custom error types in the nom 6.0 sources
-([examples/custom_error.rs](https://github.com/Geal/nom/blob/e766634631828462e8a9210a0cf88313bb79f318/examples/custom_error.rs))
+of custom error types in the nom 7.0 sources
+([examples/custom_error.rs](https://github.com/Geal/nom/blob/7.0.0/examples/custom_error.rs))
 that shows the steps needed to make things work gracefully:
 
 1. Figure out how to map a `nom` error into your error type. Usually this will
@@ -1324,15 +1339,17 @@ turns out that `map_res` always throws away the error value returned by the
 closure, and substitutes its own error (with kind `MapRes`).
 
 The same approach works for string escaping errors and float parsing errors,
-though float overflow in Rust results in infinity, not an error. It's fairly
-hard to trigger a float parse error (though it's possible, due to a
-[bug](https://github.com/rust-lang/rust/issues/31407) in the rust core library).
+though float overflow in Rust results in infinity, not an error. This means we
+will never actually return `BadFloat` because there are no
+grammatically-correct floats that can't be parsed into an `f64`.
+(Though Rust versions older than 1.55 had some problems parsing
+[certain edge cases](https://github.com/rust-lang/rust/issues/31407).)
 
 ## Part 12. Finalization.
 
 There's one more `nom`-specific step that we probably want. Assuming our code
 is a library, meant to be used by other programs, we don't want `nom::IResult`
-to show up as our result. Instead, we've prefer a plain
+to show up as our public result type. We should instead return
 `Result<Node, JSONParseError>`.
 
 We can use `all_consuming` to ensure that all input was matched. Unfortunately,
@@ -1356,7 +1373,7 @@ pub fn parse_json(input: &str) -> Result<Node, JSONParseError> {
 ```
 
 We haven't talked yet about the three
-[`nom::Err`](https://docs.rs/nom/5.1/nom/enum.Err.html) variants.
+[`nom::Err`](https://docs.rs/nom/7.0.0/nom/enum.Err.html) variants.
 
 - `Incomplete` is only used by `nom` streaming parsers. We don't use those, so
 we can just mark that branch `unreachable!` (which would panic).
@@ -1368,7 +1385,7 @@ is propagated upward without trying any alternative paths (if something like
 `alt` is present).
 
 Our code does use `Failure` in a few places: that's what we return when there
-is an numeric conversion error or a bad escape code. If we use `Error` instead,
+is a numeric conversion error or a bad escape code. If we use `Error` instead,
 the parsers could return the wrong error type. The reason is that the nom
 `alt` parser would keep trying other parsers, and if all of them fail, there's
 no way for `alt` to know which error is the right one— it usually just returns

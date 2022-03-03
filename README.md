@@ -1,5 +1,7 @@
 # Let's build a parser!
 
+[*Read the original blog post at* **codeandbitters**.](https://codeandbitters.com/lets-build-a-parser/)
+
 > Updated 10/2021 to use `nom 7.0`!
 
 This is a demonstration of building a parser in Rust using the
@@ -1397,4 +1399,5 @@ This ended up being a lot longer than I originally planned, and along the way I
 discovered several things that I'd been doing wrong in my own parsers. There
 are probably a few things that I've still missed; if you notice something, feel
 free to open an issue at this page's
-[GitHub repo](https://github.com/ericseppanen/json-parser-toy).
+[GitHub repo](https://github.com/ericseppanen/json-parser-toy), or get in touch
+on [twitter: @codeandbitters](https://twitter.com/codeandbitters)

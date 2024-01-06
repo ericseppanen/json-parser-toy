@@ -251,7 +251,7 @@ fn frac(input: &str) -> IResult<&str, &str, JSONParseError> {
 fn exp(input: &str) -> IResult<&str, &str, JSONParseError> {
     recognize(
         tuple((
-            tag("e"),
+            one_of("eE"),
             opt(alt((
                 tag("-"),
                 tag("+")
@@ -327,6 +327,7 @@ fn test_float() {
     assert_eq!(json_float("-123.99"), Ok(("", Node::Float(-123.99))));
     assert_eq!(json_float("6.02214086e23"), Ok(("", Node::Float(6.02214086e23))));
     assert_eq!(json_float("-1e6"), Ok(("", Node::Float(-1000000.0))));
+    assert_eq!(json_float("-1E6"), Ok(("", Node::Float(-1000000.0))));
     assert_eq!(json_float("1.0e+3"), Ok(("", Node::Float(1000.0))));
 
 
